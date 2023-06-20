@@ -5,7 +5,7 @@ Implementation of the Spectral EMD as outlined in https://arxiv.org/abs/2305.037
 ## Some notes
 
 * Putting a lowercase 's' in front of shape names to distinguish it from ordinary EMD (e.g. 2-sPronginess vs. 2-Pronginess)
-* The spectral representation computation is extremely fast thanks to numpy tricks and can probably be made even faster with effort
+* The spectral representation computation is extremely fast thanks to numpy tricks and can probably be made even faster with effort/cython
 
 
 
