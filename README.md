@@ -22,4 +22,5 @@ But this isn't necessary if event data is provided some other way.
 
 ## Changelog
 
+* 20 July 2023: JAX-enabled gradient optimization
 * 20 June 2023: coded spectral representation
