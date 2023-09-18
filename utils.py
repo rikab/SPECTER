@@ -57,8 +57,8 @@ def load_cmsopendata(cache_dir, dataset, pt_lower, pt_upper, eta, quality, retur
             events[i, :num_particles, 1:] = points
 
         else:
-            events[i, 0, :] = zs[:pad]
-            events[i, 1:, :] = points[:pad]
+            events[i, :, 0] = zs[:pad]
+            events[i, ::, 1:] = points[:pad]
 
 
     particle_counts = np.array(particle_counts)
