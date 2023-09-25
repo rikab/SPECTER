@@ -11,10 +11,12 @@ import matplotlib.pyplot as plt
 # JAX imports
 import jax
 import jax.numpy as jnp
-import jax_opt
+
+# Observables
+from pyspecter.Observables import Observable
 
 # Spectral EMD Helper imports
-from .SpectralEMD_Helper import weighted_sum, cross_term, theta, ds2
+from pyspecter.SpectralEMD_Helper import compute_spectral_representation,  ds2
 
 
 
@@ -24,9 +26,30 @@ from .SpectralEMD_Helper import weighted_sum, cross_term, theta, ds2
 
 class SPECTER():
 
-    def __init__(self) -> None:
-        self.obserables = []
+    def __init__(self, observables = None, compile = True) -> None:
+        """Class to compute the Spectral Earth Mover's Distance between two sets of events.
 
+        Args:
+            observables (list, optional): List of observables to use in the SPECTER model. Defaults to None.
+            compile (bool, optional): Whether or not to compile the SPECTER model. Defaults to True.
+        """
+
+        
+        self.obserables = observables
+        if observables is None:
+            self.obserables = []
+
+        # Validate that all observables are an Observable or subclass of Observable:
+        for observable in self.obserables:
+            if not isinstance(observable, Observable):
+                raise TypeError(f"Invalid observable {observable}! Must be an an instance of Observable!")
+
+        # Compile the model
+        if compile:
+            self.compile()
+            self.compiled = True
+        else:
+            self.compiled = False
 
     # Function to add an observable to the list of observables
     def add_observable(self, observable):
@@ -48,8 +71,8 @@ class SPECTER():
 
 
     # @jads2x.jit
-    def compute_spectral_representation(events, omega_max = 2, beta = 1, dtype = jnp.float32):
-        """Function to compute the spectral representation of a set of events
+    def compute_spectral_representation(self, events, omega_max = 2, beta = 1, dtype = jnp.float32):
+        """Function to compute the spectral representation of a set of events. Must be compiled before use on batched events -- see SPECTER.compile().
 
         Args:
             events (ndarray): Array of events with shape (batch_size, pad, 3)
@@ -61,42 +84,9 @@ class SPECTER():
             ndarray: Spectral representation of the events with shape (batch_size, pad*(pad-1)/2, 2)
         """
 
-        # Events shape is (batch_size, pad, 3)
-        points, zs = events[:,:,1:], events[:,:,0]
-        batch_size = zs.shape[0]
-        euclidean_distance_squared = jnp.sum(jnp.square(points[:,:, None, :] - points[:,None, :, :]), axis=-1)
-        
-
-        # Upper Triangle Matrices
-        omega_ij = jnp.triu(euclidean_distance_squared, k = 1)
-        triangle_indices = jnp.triu_indices(zs.shape[1], k = 1)
-        triangle_indices_i = triangle_indices[0]
-        triangle_indices_j = triangle_indices[1]
-
-        # Get pairwise products of energies
-        ee_ij = jnp.triu(zs[:,:,None] * zs[:,None,:])
-        ee2 = jnp.trace(ee_ij, axis1 = 1, axis2=2)
-
-        # Flatten to 1D Spectral Representation and remove 0s
-        omega_n = omega_ij[:,triangle_indices_i, triangle_indices_j]
-        omega_n = jnp.power(omega_n, beta) / beta
-        ee_n = 2 * ee_ij[:,triangle_indices_i, triangle_indices_j]
-
-
-        s = jnp.stack((omega_n, ee_n), axis = 1)
-        s = jnp.transpose(s, (0,2,1))
-        
-        # Sort and append 0
-        indices = s[:,:,0].argsort()
-        temp_indices = jnp.arange(batch_size)[:,jnp.newaxis]
-        s = s[temp_indices,indices]
-        s0 = jnp.zeros((batch_size, 1, 1))
-        s1 = jnp.concatenate((s0, jnp.expand_dims(ee2, axis = (1,2))), axis = 2)
-        s = jnp.concatenate((s1, s), axis = 1)
-
-        return s.astype(dtype)
+        return compute_spectral_representation(events, omega_max, beta, dtype)
     
-
+    # Function to compute the spectral representation of a set of events. Must be compiled before use on batched events -- see SPECTER.compile().
     def spectralEMD(self, events1, events2, type1 = "events", type2 = "events", beta = 1):
         """Function to compute the spectral Earth Mover's Distance between two sets of events
 
@@ -113,16 +103,16 @@ class SPECTER():
 
         # ########## Input formatting and validation ##########
 
-        # Compute spectral representation
+        # Format and validprint(i_pairs, j_pairs)ate inputs
         if type1 == "events":
-            s1 = self.compute_spectral_representation(events1, beta = beta)
+            s1 = self.compute_spectral_representation(events1)
         elif type1 == "spectral":
             s1 = events1
         else:
             raise ValueError(f"Invalid type {type1} for events1! Must be 'events' or 'spectral'!")
         
         if type2 == "events":
-            s2 = self.compute_spectral_representation(events2, beta = beta)
+            s2 = self.compute_spectral_representation(events2)
         elif type2 == "spectral":
             s2 = events2
         else:
@@ -136,7 +126,7 @@ class SPECTER():
 
 
         # Compute EMD
-        return self.EMD(s1, s2, type1, type2)
+        return self.ds2(s1, s2)
     
 
     # Compilation handling
@@ -145,48 +135,95 @@ class SPECTER():
            Each function is then run once on test events to ensure that the jaxpr expressions are fully traced before compilation.
         """
 
-        # ########## Compile individual functions ##########
+        
+
+        # ########## Compile and Vector Map Individual functions ##########
+
+        # If verbose, keep track of compilation time:
+        if verbose:
+            start = time.time()
 
         if verbose:
             print("Compiling SPECTER model...")
+            
 
-        self.compute_spectral_representation = jax.jit(self.compute_spectral_representation)
-        self.ds2 = jax.jit(ds2)
-        self.ds2_events1_events2, self.ds2_events1_s2 = self.initialize_ds2_events_functions()
-        self.ds2_events1_events2 = jax.jit(self.ds2_events1_events2)
-        self.ds2_events1_s2 = jax.jit(self.ds2_events1_s2)
+        # Test events
+        if verbose:
+            print("Generating test events for tracing ...")
+        test_events_1 = jnp.ones((3, 99, 3)) 
+        test_events_2 = jnp.ones((3, 101, 3))
+        self.compute_spectral_representation_TEMP, self.spectral_epresentation_gradients_TEMP = self.initialize_function_grad_trace(self.compute_spectral_representation, test_events_1, jacobian= True)
+        test_spectral_1 = self.compute_spectral_representation_TEMP(test_events_1)
+        test_spectral_2 = self.compute_spectral_representation_TEMP(test_events_2)
 
-        self.compiled_functions = [self.compute_spectral_representation, self.ds2, self.ds2_events1_events2, self.ds2_events1_s2]
+        if verbose:
+            print("Test events generated! Time taken: ", time.time() - start, " seconds.")
+
+        # ########## Generate and compile observable training functions ##########
+
+        if verbose:
+            print("Compiling observables...")
+
+        for observable in self.obserables:
+
+            def train_step(epoch, s, sprongs, return_grads = True):
+                sEMD2s = sEMD2(sprongs, s)
+                if not return_grads:
+                    return sEMD2s
+                grads = grad_sEMD2(sprongs, s)
+                return sEMD2s, grads
+            
+        if verbose:
+            print("Observables compiled! Time taken: ", time.time() - start, " seconds.")
+
+
+        # initialize ds2 functions (Need to do this first, since vmap order matters): 
+        if verbose:
+            print("Compiling spectral representation functions ...") 
+        self.ds2, self.ds2_gradients = self.initialize_function_grad_trace(ds2, test_spectral_1, test_spectral_2)
+        self.ds2_events1_events2, self.ds2_events1_events2_gradients = self.initialize_function_grad_trace(self.ds2_events1_events2, test_events_1, test_events_2)
+        self.ds2_events1_spectral2, self.ds2_events1_spectral2_gradients = self.initialize_function_grad_trace(self.ds2_events1_spectral2, test_events_1, test_spectral_2)
+        self.ds2_spectral1_events2, self.ds2_spectral1_events2_gradients = self.initialize_function_grad_trace(self.ds2_spectral1_events2, test_spectral_1, test_events_2)
+
+
+
+        # Spectral representation function
+        self.compute_spectral_representation, self.spectral_representation_gradients = self.initialize_function_grad_trace(self.compute_spectral_representation, test_events_1, jacobian= True)
+        
+        # ds2 function
+        test_spectral_1 = self.compute_spectral_representation(test_events_1)
+        test_spectral_2 = self.compute_spectral_representation(test_events_2)
+
+
+           # self.ds2_events1_events2, self.ds2_events1_s2 = self.initialize_ds2_events_functions()
+        # self.ds2_events1_events2 = jax.jit(self.ds2_events1_events2)
+        # self.ds2_events1_s2 = jax.jit(self.ds2_events1_s2)
+
+        # self.compiled_functions = [self.compute_spectral_representation, self.ds2, self.ds2_events1_events2, self.ds2_events1_s2]
 
         
         # ########## JAX Tracing ##########
 
-        # Test events
-        test_events_1 = jnp.ones((3, 99, 3)) 
-        test_events_2 = jnp.ones((3, 101, 3))
 
-        # Run each function once to ensure that the jaxpr expressions are fully traced before compilation
-        test_s_1 = self.compute_spectral_representation(test_events_1).block_until_ready()
-        test_s_2 = self.compute_spectral_representation(test_events_2).block_until_ready()
 
-        test_ds2 = self.ds2(test_s_1, test_s_2).block_until_ready()
-        test_ds2_events1_events2 = self.ds2_events1_events2(test_events_1, test_events_2).block_until_ready()
-        test_ds2_events1_s2 = self.ds2_events1_s2(test_events_1, test_s_2).block_until_ready()
+
+        # test_ds2 = self.ds2(test_s_1, test_s_2).block_until_ready()
+        # test_ds2_events1_events2 = self.ds2_events1_events2(test_events_1, test_events_2).block_until_ready()
+        # test_ds2_events1_s2 = self.ds2_events1_s2(test_events_1, test_s_2).block_until_ready()
 
         # Initialize gradient functions for each compiled function
-        self.spectral_representation_gradients = self.initialize_gradient_function(self.compute_spectral_representation)
-        self.ds2_gradients = self.initialize_gradient_function(self.ds2)
-        self.ds2_events1_events2_gradients = self.initialize_gradient_function(self.ds2_events1_events2)
-        self.ds2_events1_s2_gradients = self.initialize_gradient_function(self.ds2_events1_s2)
+        # self.ds2_gradients = self.initialize_gradient_function(self.ds2)
+        # self.ds2_events1_events2_gradients = self.initialize_gradient_function(self.ds2_events1_events2)
+        # self.ds2_events1_s2_gradients = self.initialize_gradient_function(self.ds2_events1_s2)
 
         # Trace through each gradient function
-        test_spectral_representation_gradients = self.spectral_representation_gradients(test_events_1).block_until_ready()
-        test_ds2_gradients = self.ds2_gradients(test_s_1, test_s_2).block_until_ready()
-        test_ds2_events1_events2_gradients = self.ds2_events1_events2_gradients(test_events_1, test_events_2).block_until_ready()
-        test_ds2_events1_s2_gradients = self.ds2_events1_s2_gradients(test_events_1, test_s_2).block_until_ready()
+        # test_ds2_gradients = self.ds2_gradients(test_s_1, test_s_2).block_until_ready()
+        # test_ds2_events1_events2_gradients = self.ds2_events1_events2_gradients(test_events_1, test_events_2).block_until_ready()
+        # test_ds2_events1_s2_gradients = self.ds2_events1_s2_gradients(test_events_1, test_s_2).block_until_ready()
 
 
-    
+        if verbose:
+            print("Compilation complete! Time taken: ", time.time() - start, " seconds.")
 
 
     # ###################################### #
@@ -195,7 +232,7 @@ class SPECTER():
 
 
     # Function to initialize the gradient function for a given function
-    def initialize_gradient_function(function):
+    def initialize_function_grad_trace(self, function, *args, jacobian = False, vmap = True,  **kwargs):
         """Helper function to initialize the gradient function for a given function
 
         Args:
@@ -205,29 +242,44 @@ class SPECTER():
             function: Batchwise Gradient function for the given function
         """
 
-        return jax.jit(jax.grad(jnp.sum(function), argnums=0))
+        if not jacobian:
+            grad = jax.jit(jax.vmap(jax.grad(function, argnums=0)))
+        else:
+            grad = jax.jit(jax.vmap(jax.jacfwd(function, argnums=0)))
+
+        fun = jax.jit(jax.vmap(function))
+        if not vmap:
+            fun = jax.jit(function)
+            grad = jax.jit(jax.grad(function, argnums=0))
+
+        # Trace
+        test = fun(*args, **kwargs).block_until_ready()
+        test_grad = grad(*args, **kwargs).block_until_ready()
+
+        return fun, grad
     
-    # Function to initialize the ds2_events1_events2 and ds2_events1_s2 functions
-    def initialize_ds2_events_functions(self):
-        """Helper function to initialize the ds2_events1_events2 and ds2_events1_s2 functions
-
-        Returns:
-            function, function: ds2_events1_events2 and ds2_events1_s2 functions
-        """
 
 
+        # ds2 where both arguments are in events form
+    def ds2_events1_events2(self, events1, events2):
 
-        def ds2_events1_events2(events1, events2):
+        s1 = self.compute_spectral_representation(events1)
+        s2 = self.compute_spectral_representation(events2)
 
-            s1 = self.compute_spectral_representation(events1)
+        return ds2(s1, s2)
+    
+    # ds2 where the first argument is in events form and the second is in spectral form
+    def ds2_events1_spectral2(self, events1, s2):
+
+        s1 = self.compute_spectral_representation(events1)
+
+        return ds2(s1, s2)
+    
+    # ds2 where the first argument is in spectral form and the second is in events form
+    def ds2_spectral1_events2(self, s1, events2):
+            
             s2 = self.compute_spectral_representation(events2)
 
-            return self.ds2(s1, s2)
-        
-        def ds2_events1_s2(events1, s2):
-
-            s1 = self.compute_spectral_representation(events1)
-
-            return self.ds2(s1, s2)
+            return ds2(s1, s2)
     
-        return ds2_events1_events2, ds2_events1_s2
+        # return ds2_events1_events2, ds2_events1_spectral2, ds2_spectral1_events2
