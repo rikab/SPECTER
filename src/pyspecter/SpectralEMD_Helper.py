@@ -99,6 +99,37 @@ def cross_term(s1, s2):
     return cross_term
 
 
+def cross_term_improved(s1, s2):
+
+    # Cross term
+    omega1s = s1[:,0]
+    omega2s = s2[:,0]
+
+    E1s = s1[:,1]
+    E2s = s2[:,1]
+
+    # Calculate cumulative spectral functions
+    cumulative_inclusive_1 = jnp.cumsum(E1s, axis = -1)
+    cumulative_inclusive_2 = jnp.cumsum(E2s, axis = -1)
+
+    # Exclusive = inclusive - 2EE
+    cumulative_exclusive_1 = cumulative_inclusive_1 - E1s
+    cumulative_exclusive_2 = cumulative_inclusive_2 - E2s
+
+    # O(n4) parts -- determine which indices survive the theta function
+    i_indices, j_indices = jnp.nonzero( (cumulative_inclusive_1[:,None] - cumulative_exclusive_2[None,:] > 0) * ((cumulative_inclusive_2[:,None] - cumulative_exclusive_1[None,:] > 0)))
+     
+    # O(n2) parts -- calculate the cross term using the nonzero indices
+    omega_n_omega_l = omega1s[i_indices,None] * omega2s[None,j_indices]
+    minE = jnp.minimum(-cumulative_exclusive_1[i_indices,None], -cumulative_exclusive_2[None,j_indices]) + jnp.minimum(cumulative_inclusive_1[i_indices,None], cumulative_inclusive_2[None,j_indices])
+
+    cross = omega_n_omega_l * minE
+    cross_term = jnp.sum(cross, axis = (-1,-2))
+
+
+    return cross_term
+
+
 def theta(x):
 
     return x > 0 
@@ -162,6 +193,13 @@ def ds2_spectral1_events2(s1, events2):
     s2 = compute_spectral_representation(events2)
 
     return ds2(s1, s2)
+
+
+# ###########################
+# ########## TESTS ##########
+# ###########################
+
+
 
 
 # ########################################

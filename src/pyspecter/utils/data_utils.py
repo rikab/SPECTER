@@ -15,7 +15,7 @@ except ImportError:
 # ###############################
 
 
-def load_cmsopendata(cache_dir, dataset, pt_lower, pt_upper, eta, quality, return_kfactors=True, pad = 125, momentum_scale=1, n=1000, amount=1):
+def load_cmsopendata(cache_dir, dataset, pt_lower, pt_upper, eta, quality, normalize_pad = True, return_kfactors=True, pad = 125, momentum_scale=1, n=1000, amount=1):
     """Function to load CMS Open Data from the energyflow package
     
     Args:
@@ -25,6 +25,7 @@ def load_cmsopendata(cache_dir, dataset, pt_lower, pt_upper, eta, quality, retur
         pt_upper (float): Upper bound on the jet $p_T$
         eta (float): Upper bound on the jet |$\eta$|
         quality (int): Quality of the jet
+        normalize_pad (bool, optional): Whether to normalize the events to 1 $after$ padding. Defaults to True.
         return_kfactors (bool, optional): Whether to return the k-factor weights. Defaults to True.
         pad (int, optional): Number of particles to pad the events to. Defaults to 125.
         momentum_scale (float, optional): Common scale factor to divide all momenta by to keep parameters ~ 1. Defaults to 1.
@@ -72,7 +73,8 @@ def load_cmsopendata(cache_dir, dataset, pt_lower, pt_upper, eta, quality, retur
             events[i, :num_particles, 1:] = points
 
         else:
-            events[i, :, 0] = zs[:pad]
+            norm = np.sum(zs[:pad]) if normalize_pad else 1
+            events[i, :, 0] = zs[:pad] / norm
             events[i, ::, 1:] = points[:pad]
 
 
