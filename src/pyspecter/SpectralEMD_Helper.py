@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 from jax import grad, jacobian, jit
+from jax.lax import dynamic_slice
 
 
 from jax.example_libraries import optimizers as jax_opt
@@ -8,7 +9,6 @@ import numpy as np
 
 
 # ########## Spectral Representation ##########
-
 def compute_spectral_representation(events, omega_max = 2, beta = 1, dtype = jnp.float32):
         """Function to compute the spectral representation of a set of events. Must be compiled before use on batched events -- see SPECTER.compile().
 
@@ -28,7 +28,7 @@ def compute_spectral_representation(events, omega_max = 2, beta = 1, dtype = jnp
         
 
         # Upper Triangle Matrices
-        omega_ij = jnp.triu(euclidean_distance_squared, k = 1)
+        omega_ij = jnp.triu((euclidean_distance_squared), k = 1)
         triangle_indices = jnp.triu_indices(zs.shape[0], k = 1)
         triangle_indices_i = triangle_indices[0]
         triangle_indices_j = triangle_indices[1]
@@ -39,7 +39,7 @@ def compute_spectral_representation(events, omega_max = 2, beta = 1, dtype = jnp
 
         # Flatten to 1D Spectral Representation and remove 0s
         omega_n = omega_ij[triangle_indices_i, triangle_indices_j]
-        omega_n = jnp.power(omega_n, beta) / beta
+        omega_n = jnp.power(omega_n, beta / 2) / beta
         ee_n = 2 * ee_ij[triangle_indices_i, triangle_indices_j]
 
         s = jnp.stack((omega_n, ee_n), axis = 1)
@@ -51,6 +51,8 @@ def compute_spectral_representation(events, omega_max = 2, beta = 1, dtype = jnp
         s0 = jnp.zeros((1, 1))
         s1 = jnp.concatenate((s0, ee2 * jnp.ones((1,1))), axis = 1)
         s = jnp.concatenate((s1, s), axis = 0)
+
+        
 
         return s.astype(dtype)
 
@@ -69,7 +71,80 @@ def weighted_sum(s, p = 2, max_index = None, inclusive = True):
         return jnp.sum(s[:max_index,1] * jnp.power(s[:max_index,0], p),axis = -1)
 
 
+# JAX algorithm to find index pairs (i,j) such that $X_i > Y_{j-1}$ and $Y_j > X_{i-1}$ for sorted X and Y
+def find_indices_jax(X, Y):
 
+
+    def condition(state):
+        step, i, j, j_prev, _ = state
+        return (jax.lax.lt(i, X_length) & jax.lax.lt(j, Y_length))
+
+    def body(state):
+        step, i, j, j_prev, result = state
+        x_gt_y = jnp.take(X, i) >= jnp.take(Y, j - 1)
+        y_gt_x = jnp.take(Y, j) >= jnp.take(X, i - 1)
+
+        # Conditionals to update i and j
+        advance_i = (x_gt_y & y_gt_x)
+        advance_i_2 = ((jnp.take(X, i) <= jnp.take(Y, j-1))) & ~advance_i
+        advance_j = ~advance_i & ~advance_i_2
+
+        next_i = i + jax.lax.select(advance_i | advance_i_2, 1, 0)
+        next_j = j + jax.lax.select(advance_j, 1, 0)
+        next_j_prev = j_prev + jax.lax.select(advance_j, 1, 0)
+
+        # Conditionals to decide whether to add (i,j) or null = (-1,-1)
+        next_result = jax.lax.cond(
+            x_gt_y & y_gt_x,
+            lambda _: jnp.array([i, j], dtype=jnp.int32),
+            lambda _: jnp.array([-1, -1], dtype=jnp.int32),
+            None
+        )
+
+        next_result = result.at[step].set(next_result)
+        return (step + 1, next_i, next_j, next_j_prev, next_result)
+    
+    # Initializations
+    step = 0
+    i_init = 1
+    j_init = 1
+    j_prev_init = 1
+    X_length, Y_length = X.shape[-1], Y.shape[-1]
+    max_length = X_length + Y_length
+    initial_state = (step, i_init, j_init, j_prev_init, jnp.full((max_length, 2), -1, dtype=jnp.int32), )
+
+    # Run while loop
+    _, _, _, _, final_result = jax.lax.while_loop(condition, body, initial_state)
+
+    return final_result
+
+
+# Function to find indices on X and Y, then Y and X, and combine:
+def find_indices(X, Y):
+        
+        x_size = X.shape[0]
+        y_size = Y.shape[0]
+    
+        # Find indices on X and Y
+        indices = find_indices_jax(X, Y)
+        i_indices, j_indices = indices[:,0], indices[:,1]
+    
+        # Find indices on Y and X
+        indices = find_indices_jax(Y, X)
+        j_indices_2, i_indices_2 = indices[:,0], indices[:,1]
+    
+        # Combine
+        i_indices = jnp.concatenate((i_indices, i_indices_2))
+        j_indices = jnp.concatenate((j_indices, j_indices_2))
+
+        # Remove duplicates
+        indices = jnp.unique(jnp.stack((i_indices, j_indices), axis = -1), size = 2 * (x_size + y_size), fill_value = -1, axis = 0)
+        mask = (indices[:,0] > -1) * (indices[:,1] > -1)
+
+        return indices, mask
+
+
+# Compute the cross term using the OLD parralized algorithm [DEPRECATED]
 def cross_term(s1, s2):
 
     # Cross term
@@ -98,7 +173,90 @@ def cross_term(s1, s2):
 
     return cross_term
 
+def sub_cross_term(omega1s, omega2, E1_cumsums, E2_cumsum, shifted_E1_cumsums, shifted_E2_cumsum):
 
+    omega_n_omega_l = omega1s * omega2
+    minE = jnp.minimum(E1_cumsums, E2_cumsum)
+    maxE = jnp.maximum(shifted_E1_cumsums, shifted_E2_cumsum)
+    x = minE - maxE
+
+    cross = omega_n_omega_l * x * theta(x)
+    cross_term = jnp.sum(cross, axis = -1)
+    return cross_term
+
+vmapped_sub_cross_term = jax.vmap(sub_cross_term, in_axes = (None, 0, None, 0, None, 0), out_axes = 0)
+
+
+def cross_term_2_loop(index, vals):
+     
+    result, omega1s, omega2s, E1_cumsums, E2_cumsums, shifted_E1_cumsums, shifted_E2_cumsums, prev_index = vals
+
+    omega_n_omega_l = omega1s * omega2s[index]
+    minE = jnp.minimum(E1_cumsums, E2_cumsums[index])
+    maxE = jnp.maximum(shifted_E1_cumsums, shifted_E2_cumsums[index])
+    x = minE - maxE
+
+    t = theta(x)
+    prev_index = jnp.argmax(t)
+    cross = omega_n_omega_l * x * theta(x)
+    result += jnp.sum(cross, axis = -1)
+
+    return result, omega1s, omega2s, E1_cumsums, E2_cumsums, shifted_E1_cumsums, shifted_E2_cumsums, prev_index     
+     
+
+# @jax.checkpoint
+def cross_term_2_scan(vals, index):
+    result, omega1s, omega2s, E1_cumsums, E2_cumsums, shifted_E1_cumsums, shifted_E2_cumsums, prev_index = vals
+
+    omega_n_omega_l = omega1s * omega2s[index]
+    minE = jnp.minimum(E1_cumsums, E2_cumsums[index])
+    maxE = jnp.maximum(shifted_E1_cumsums, shifted_E2_cumsums[index])
+    x = minE - maxE
+
+    t = theta(x)
+    prev_index = jnp.argmax(t)
+    cross = omega_n_omega_l * x * t
+    result += jnp.sum(cross, axis=-1)
+
+    # Return a dummy value (None)
+    return (result, omega1s, omega2s, E1_cumsums, E2_cumsums, shifted_E1_cumsums, shifted_E2_cumsums, prev_index), None
+
+
+# Compute the cross term using the OLD parralized algorithm [DEPRECATED]
+def cross_term_2(s1, s2):
+
+    # Cross term
+    omega1s = s1[:,0]
+    omega2s = s2[:,0]
+
+    E1s = s1[:,1]
+    E2s = s2[:,1]
+
+
+    E1_cumsums = jnp.cumsum(E1s, axis = -1)
+    E2_cumsums = jnp.cumsum(E2s, axis = -1)
+    shifted_E1_cumsums = jnp.concatenate((jnp.array((E1_cumsums[0],)), E1_cumsums[:-1]), axis = -1) 
+    shifted_E2_cumsums = jnp.concatenate((jnp.array((E2_cumsums[0],)), E2_cumsums[:-1]), axis = -1) 
+
+    # result = 0
+    # def temp(result, omega1s, omega2s, E1_cumsums, E2_cumsums, shifted_E1_cumsums, shifted_E2_cumsums):
+    #     return result + jnp.sum(vmapped_sub_cross_term(omega1s, omega2s, E1_cumsums, E2_cumsums, shifted_E1_cumsums, shifted_E2_cumsums), axis = -1)
+
+    # result = temp(result, omega1s, omega2s, E1_cumsums, E2_cumsums, shifted_E1_cumsums, shifted_E2_cumsums)
+
+    # # For loop over the second event
+    # vals = (0, omega1s, omega2s, E1_cumsums, E2_cumsums, shifted_E1_cumsums, shifted_E2_cumsums, 0)
+    # result, _, _, _, _, _, _, _ = jax.lax.fori_loop(0, omega2s.shape[0], cross_term_2_loop, vals)
+
+
+    # Use lax.scan to perform the loop
+    vals = (0, omega1s, omega2s, E1_cumsums, E2_cumsums, shifted_E1_cumsums, shifted_E2_cumsums, 0)
+    vals, _ = jax.lax.scan(cross_term_2_scan, vals, jnp.arange(omega2s.shape[0]))
+    result = vals[0]
+
+    return result
+
+# Calculate the cross term using the improved JAX finding finding algorithm ~ O(n^2)
 def cross_term_improved(s1, s2):
 
     # Cross term
@@ -112,19 +270,27 @@ def cross_term_improved(s1, s2):
     cumulative_inclusive_1 = jnp.cumsum(E1s, axis = -1)
     cumulative_inclusive_2 = jnp.cumsum(E2s, axis = -1)
 
+    Etot1 = jnp.sum(E1s)
+    Etot2 = jnp.sum(E2s)
+
     # Exclusive = inclusive - 2EE
     cumulative_exclusive_1 = cumulative_inclusive_1 - E1s
     cumulative_exclusive_2 = cumulative_inclusive_2 - E2s
 
-    # O(n4) parts -- determine which indices survive the theta function
-    i_indices, j_indices = jnp.nonzero( (cumulative_inclusive_1[:,None] - cumulative_exclusive_2[None,:] > 0) * ((cumulative_inclusive_2[:,None] - cumulative_exclusive_1[None,:] > 0)))
-     
-    # O(n2) parts -- calculate the cross term using the nonzero indices
-    omega_n_omega_l = omega1s[i_indices,None] * omega2s[None,j_indices]
-    minE = jnp.minimum(-cumulative_exclusive_1[i_indices,None], -cumulative_exclusive_2[None,j_indices]) + jnp.minimum(cumulative_inclusive_1[i_indices,None], cumulative_inclusive_2[None,j_indices])
+    # Determine which indices survive the theta function O(n^2)
+    indices, mask = find_indices(cumulative_inclusive_1, cumulative_inclusive_2)
+    indices = jax.lax.stop_gradient(indices)
+    mask = jax.lax.stop_gradient(mask)
+    i_indices, j_indices = indices[:,0], indices[:,1]
 
+    
+    # O(n2) parts -- calculate the cross term using the nonzero indices
+    omega_n_omega_l = omega1s[i_indices] * omega2s[j_indices]
+    minE = -jnp.maximum(Etot1 - cumulative_inclusive_1[i_indices], Etot2 - cumulative_inclusive_2[j_indices]) + jnp.minimum(Etot1 - cumulative_exclusive_1[i_indices], Etot2 -  cumulative_exclusive_2[j_indices])
+
+    # Sum over the nonzero indices
     cross = omega_n_omega_l * minE
-    cross_term = jnp.sum(cross, axis = (-1,-2))
+    cross_term = jnp.sum(cross * mask, axis = (-1))
 
 
     return cross_term
@@ -132,15 +298,14 @@ def cross_term_improved(s1, s2):
 
 def theta(x):
 
-    return x > 0 
-
+    return jnp.heaviside(x, 0.0) 
 
 def ds2(s1, s2):
 
     term1 = weighted_sum(s1)
     term2 = weighted_sum(s2)
 
-    return term1 + term2 - 2*cross_term(s1, s2)
+    return term1 + term2 - 2*cross_term_2(s1, s2)
 
 
 # ########## ds2 variants ##########

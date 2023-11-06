@@ -2,11 +2,12 @@
 
 class Observable():
 
-    def __init__(self, param_dict, sampler, initializer = None):
+    def __init__(self, param_dict, sampler, name, initializer = None):
 
         self.param_dict = param_dict
         self.sampler = sampler
         self.initializer = initializer
+        self.name = name
 
         self.is_trivial = (len(list(self.param_dict.keys())) == 0)
 

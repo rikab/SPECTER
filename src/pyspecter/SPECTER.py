@@ -159,22 +159,6 @@ class SPECTER():
         if verbose:
             print("Test events generated! Time taken: ", time.time() - start, " seconds.")
 
-        # ########## Generate and compile observable training functions ##########
-
-        if verbose:
-            print("Compiling observables...")
-
-        for observable in self.obserables:
-
-            def train_step(epoch, s, sprongs, return_grads = True):
-                sEMD2s = sEMD2(sprongs, s)
-                if not return_grads:
-                    return sEMD2s
-                grads = grad_sEMD2(sprongs, s)
-                return sEMD2s, grads
-            
-        if verbose:
-            print("Observables compiled! Time taken: ", time.time() - start, " seconds.")
 
 
         # initialize ds2 functions (Need to do this first, since vmap order matters): 
@@ -220,6 +204,42 @@ class SPECTER():
         # test_ds2_gradients = self.ds2_gradients(test_s_1, test_s_2).block_until_ready()
         # test_ds2_events1_events2_gradients = self.ds2_events1_events2_gradients(test_events_1, test_events_2).block_until_ready()
         # test_ds2_events1_s2_gradients = self.ds2_events1_s2_gradients(test_events_1, test_s_2).block_until_ready()
+
+
+
+                # ########## Generate and compile observable training functions ##########
+
+        if verbose:
+            print("Compiling observables...")
+
+        for observable in self.obserables:
+
+            def train_step(epoch, events, sprongs, return_grads = True):
+
+                # TODO: Think about generating sprongs from the observable itself using params
+                sEMD2s = self.ds2_spectral1_events2(sprongs, events)
+                grads = self.ds2_spectral1_events2_gradients(sprongs, events)
+                return sEMD2s, grads
+            
+
+            train_step = jax.jit(jax.vmap(train_step, in_axes = (None, 0, 0, None)))
+
+
+            # Dyanmically create the function self.compute_{observable_name} and self.compute_{observable_name}_gradients
+            def compute_observable(events, beta = 1.0, R = 0.1, timing = True, epochs = 100, learning_rate = 0.1, verbose = True):
+
+                # Optimizer
+                opt_state = None
+                opt_init, opt_update, get_params = jax_opt.adam(learning_rate)
+                opt_state = opt_init(sprongs)
+
+
+                return observable.compute(sprongs)
+            
+
+        if verbose:
+            print("Observables compiled! Time taken: ", time.time() - start, " seconds.")
+
 
 
         if verbose:
