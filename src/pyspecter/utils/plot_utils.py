@@ -14,7 +14,7 @@ def initialize():
 
 
 # Initialize a new plot
-def newplot(width = 8, height = 8, fontsize = 20, style = 'sans-serif', fontset = "cm", auto_layout = True, stamp = True):
+def newplot(width = 8, height = 8, fontsize = 20, style = 'serif', fontset = "cm", auto_layout = True, stamp = True):
 
 
     fig, axes = plt.subplots(figsize=(width,height))
@@ -40,15 +40,15 @@ def newplot(width = 8, height = 8, fontsize = 20, style = 'sans-serif', fontset 
 # ######################
 
 
-def plot_event(event, R, ax = None, filename=None, color="red", title="", show=True):
+def plot_event(ax, event, R, filename=None, color="red", title="", show=True, label = "Event"):
 
     # plot the two events
     plt.rcParams.update({'font.size': 18})
     if ax is None:
-        newplot
+        newplot()
 
     pts, ys, phis =event[:,0], event[:, 1], event[:, 2]
-    ax.scatter(ys, phis, marker='o', s=2 * pts * 500/np.sum(pts), color=color, lw=0, zorder=10, label="Event")
+    ax.scatter(ys, phis, marker='o', s=2 * pts * 500/np.sum(pts), color=color, lw=0, zorder=10, label=label)
 
     # Legend
     # legend = plt.legend(loc=(0.1, 1.0), frameon=False, ncol=3, handletextpad=0)
@@ -63,17 +63,12 @@ def plot_event(event, R, ax = None, filename=None, color="red", title="", show=T
     plt.xticks(np.linspace(-R, R, 5))
     plt.yticks(np.linspace(-R, R, 5))
 
-    ax.set_aspect('equal')
+    # ax.set_aspect('equal')
     if filename:
         plt.savefig(filename)
         plt.show()
         plt.close()
-        return ax
-    elif show:
-        plt.show()
-        return ax
-    else:
-        return ax
+
     
 
 
@@ -103,3 +98,37 @@ def hist_with_outline(ax, points, bins, range, weights = None, color = "purple",
 
     ax.hist(points, bins = bins, range = range, weights = weights, color = color, alpha = 0.25, histtype='stepfilled', density = True, **kwargs)
     ax.hist(points, bins = bins, range = range, weights = weights, color = color, alpha = 0.75, histtype='step', density = True)
+
+
+
+# function to add a stamp to figures
+def stamp(left_x, top_y,
+          ax=None,
+          delta_y=0.05,
+          textops_update=None,
+          boldfirst = True,
+          **kwargs):
+    
+     # handle defualt axis
+    if ax is None:
+        ax = plt.gca()
+    
+    # text options
+    textops = {'horizontalalignment': 'left',
+               'verticalalignment': 'center',
+               'fontsize': 18,
+               'transform': ax.transAxes}
+    if isinstance(textops_update, dict):
+        textops.update(textops_update)
+    
+    # add text line by line
+    for i in range(len(kwargs)):
+        y = top_y - i*delta_y
+        t = kwargs.get('line_' + str(i))
+
+
+        if t is not None:
+            if boldfirst and i == 0:
+                ax.text(left_x, y, t, weight='bold', **textops)
+            else:
+                ax.text(left_x, y, t, **textops)

@@ -86,8 +86,23 @@ class SPECTER():
 
         return compute_spectral_representation(events, omega_max, beta, dtype)
     
+    def compute_spectral_representation_spherical(self, events, omega_max = 2, beta = 1, dtype = jnp.float32):
+        """Function to compute the spectral representation of a set of events. Must be compiled before use on batched events -- see SPECTER.compile().
+
+        Args:
+            events (ndarray): Array of events with shape (batch_size, pad, 3)
+            omega_max (float, optional): Maximum omega value. Defaults to 2.
+            beta (float, optional): Beta value for the spectral representation. Defaults to 1.
+            dtype (jax.numpy.dtype, optional): Data type for the output. Defaults to jax.numpy.float32.
+
+        Returns:
+            ndarray: Spectral representation of the events with shape (batch_size, pad*(pad-1)/2, 2)
+        """
+
+        return compute_spectral_representation(events, omega_max, beta, dtype, euclidean=False)
+    
     # Function to compute the spectral representation of a set of events. Must be compiled before use on batched events -- see SPECTER.compile().
-    def spectralEMD(self, events1, events2, type1 = "events", type2 = "events", beta = 1):
+    def spectralEMD(self, events1, events2, type1 = "events", type2 = "events", beta = 1, metric = "euclidean"):
         """Function to compute the spectral Earth Mover's Distance between two sets of events
 
         Args:
@@ -105,14 +120,20 @@ class SPECTER():
 
         # Format and validprint(i_pairs, j_pairs)ate inputs
         if type1 == "events":
-            s1 = self.compute_spectral_representation(events1)
+            if metric == "euclidean":
+                s1 = self.compute_spectral_representation(events1)
+            elif metric == "spherical":
+                s1 = self.compute_spectral_representation_spherical(events1)
         elif type1 == "spectral":
             s1 = events1
         else:
             raise ValueError(f"Invalid type {type1} for events1! Must be 'events' or 'spectral'!")
         
         if type2 == "events":
-            s2 = self.compute_spectral_representation(events2)
+            if metric == "euclidean":
+                s2 = self.compute_spectral_representation(events2)
+            elif metric == "spherical":
+                s2 = self.compute_spectral_representation_spherical(events2)
         elif type2 == "spectral":
             s2 = events2
         else:
@@ -153,8 +174,12 @@ class SPECTER():
         test_events_1 = jnp.ones((3, 99, 3)) 
         test_events_2 = jnp.ones((3, 101, 3))
         self.compute_spectral_representation_TEMP, self.spectral_epresentation_gradients_TEMP = self.initialize_function_grad_trace(self.compute_spectral_representation, test_events_1, jacobian= True)
+        self.compute_spectral_representation_spherical_TEMP, self.spectral_epresentation_spherical_gradients_TEMP = self.initialize_function_grad_trace(self.compute_spectral_representation_spherical, test_events_1, jacobian= True) 
+
         test_spectral_1 = self.compute_spectral_representation_TEMP(test_events_1)
         test_spectral_2 = self.compute_spectral_representation_TEMP(test_events_2)
+    
+
 
         if verbose:
             print("Test events generated! Time taken: ", time.time() - start, " seconds.")
@@ -173,7 +198,8 @@ class SPECTER():
 
         # Spectral representation function
         self.compute_spectral_representation, self.spectral_representation_gradients = self.initialize_function_grad_trace(self.compute_spectral_representation, test_events_1, jacobian= True)
-        
+        self.compute_spectral_representation_spherical, self.spectral_representation_spherical_gradients = self.initialize_function_grad_trace(self.compute_spectral_representation_spherical, test_events_1, jacobian= True)
+
         # ds2 function
         test_spectral_1 = self.compute_spectral_representation(test_events_1)
         test_spectral_2 = self.compute_spectral_representation(test_events_2)

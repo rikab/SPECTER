@@ -8,8 +8,19 @@ from jax.example_libraries import optimizers as jax_opt
 import numpy as np
 
 
+
+
+def euclidean_metric(points):
+    return jnp.sum(jnp.square(points[:, None, :] - points[None, :, :]), axis=-1)
+
+def spherical_metric(points):
+    return jnp.arccos(jnp.sum(points[:, None, :] * points[None, :, :], axis=-1) / jnp.linalg.norm(points[:, None, :], axis=-1) / jnp.linalg.norm(points[None, :], axis=-1))
+    return jnp.sqrt(1 - jnp.sum(points[:, None, :] * points[None, :, :], axis=-1) / (jnp.linalg.norm(points[:, None, :], axis=-1) * jnp.linalg.norm(points[None, :, :], axis=-1)))
+
+
+
 # ########## Spectral Representation ##########
-def compute_spectral_representation(events, omega_max = 2, beta = 1, dtype = jnp.float32):
+def compute_spectral_representation(events, omega_max = 2, beta = 2, dtype = jnp.float32, euclidean = True):
         """Function to compute the spectral representation of a set of events. Must be compiled before use on batched events -- see SPECTER.compile().
 
         Args:
@@ -24,7 +35,9 @@ def compute_spectral_representation(events, omega_max = 2, beta = 1, dtype = jnp
 
         # Events shape is (pad, 3)
         points, zs = events[:,1:], events[:,0]
-        euclidean_distance_squared = jnp.sum(jnp.square(points[:, None, :] - points[None, :, :]), axis=-1)
+
+
+        euclidean_distance_squared = jax.lax.cond(euclidean, euclidean_metric, spherical_metric, points)
         
 
         # Upper Triangle Matrices
@@ -71,52 +84,20 @@ def weighted_sum(s, p = 2, max_index = None, inclusive = True):
         return jnp.sum(s[:max_index,1] * jnp.power(s[:max_index,0], p),axis = -1)
 
 
-# JAX algorithm to find index pairs (i,j) such that $X_i > Y_{j-1}$ and $Y_j > X_{i-1}$ for sorted X and Y
 def find_indices_jax(X, Y):
 
+    pairs = jnp.zeros((X.shape[0] + Y.shape[0], 2), dtype=int)
 
-    def condition(state):
-        step, i, j, j_prev, _ = state
-        return (jax.lax.lt(i, X_length) & jax.lax.lt(j, Y_length))
+    j_indices = jnp.searchsorted(Y, X, side = 'left')
+    i_indices = jnp.searchsorted(X, Y, side = 'left')
 
-    def body(state):
-        step, i, j, j_prev, result = state
-        x_gt_y = jnp.take(X, i) >= jnp.take(Y, j - 1)
-        y_gt_x = jnp.take(Y, j) >= jnp.take(X, i - 1)
+    # Update the 'pairs' array using the new 'at' method
+    pairs = pairs.at[0:X.shape[0], 0].set(jnp.arange(X.shape[0]))
+    pairs = pairs.at[0:X.shape[0], 1].set(j_indices)
+    pairs = pairs.at[X.shape[0]:X.shape[0] + Y.shape[0], 0].set(i_indices)
+    pairs = pairs.at[X.shape[0]:X.shape[0] + Y.shape[0], 1].set(jnp.arange(Y.shape[0]))
 
-        # Conditionals to update i and j
-        advance_i = (x_gt_y & y_gt_x)
-        advance_i_2 = ((jnp.take(X, i) <= jnp.take(Y, j-1))) & ~advance_i
-        advance_j = ~advance_i & ~advance_i_2
-
-        next_i = i + jax.lax.select(advance_i | advance_i_2, 1, 0)
-        next_j = j + jax.lax.select(advance_j, 1, 0)
-        next_j_prev = j_prev + jax.lax.select(advance_j, 1, 0)
-
-        # Conditionals to decide whether to add (i,j) or null = (-1,-1)
-        next_result = jax.lax.cond(
-            x_gt_y & y_gt_x,
-            lambda _: jnp.array([i, j], dtype=jnp.int32),
-            lambda _: jnp.array([-1, -1], dtype=jnp.int32),
-            None
-        )
-
-        next_result = result.at[step].set(next_result)
-        return (step + 1, next_i, next_j, next_j_prev, next_result)
-    
-    # Initializations
-    step = 0
-    i_init = 1
-    j_init = 1
-    j_prev_init = 1
-    X_length, Y_length = X.shape[-1], Y.shape[-1]
-    max_length = X_length + Y_length
-    initial_state = (step, i_init, j_init, j_prev_init, jnp.full((max_length, 2), -1, dtype=jnp.int32), )
-
-    # Run while loop
-    _, _, _, _, final_result = jax.lax.while_loop(condition, body, initial_state)
-
-    return final_result
+    return pairs
 
 
 # Function to find indices on X and Y, then Y and X, and combine:
@@ -127,19 +108,10 @@ def find_indices(X, Y):
     
         # Find indices on X and Y
         indices = find_indices_jax(X, Y)
-        i_indices, j_indices = indices[:,0], indices[:,1]
-    
-        # Find indices on Y and X
-        indices = find_indices_jax(Y, X)
-        j_indices_2, i_indices_2 = indices[:,0], indices[:,1]
-    
-        # Combine
-        i_indices = jnp.concatenate((i_indices, i_indices_2))
-        j_indices = jnp.concatenate((j_indices, j_indices_2))
 
         # Remove duplicates
-        indices = jnp.unique(jnp.stack((i_indices, j_indices), axis = -1), size = 2 * (x_size + y_size), fill_value = -1, axis = 0)
-        mask = (indices[:,0] > -1) * (indices[:,1] > -1)
+        indices = jnp.unique(indices, size = (x_size + y_size), fill_value = -1, axis = 0)
+        mask = (indices[:,0] > 0) * (indices[:,1] > 0) * (indices[:,0] < X.shape[0]) * (indices[:,1] < Y.shape[0])
 
         return indices, mask
 
@@ -305,7 +277,7 @@ def ds2(s1, s2):
     term1 = weighted_sum(s1)
     term2 = weighted_sum(s2)
 
-    return term1 + term2 - 2*cross_term_2(s1, s2)
+    return term1 + term2 - 2*cross_term_improved(s1, s2)
 
 
 # ########## ds2 variants ##########
