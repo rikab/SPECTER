@@ -42,6 +42,9 @@ dependencies = [
     "rikabplotlib@git+https://github.com/rikab/rikabplotlib"
 ]
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [project.urls]
 Documentation = "https://github.com/rikab/SPECTER"
 Homepage = "https://github.com/rikab/SPECTER"
