@@ -14,15 +14,18 @@ def euclidean_metric(points):
     return jnp.sum(jnp.square(points[:, None, :] - points[None, :, :]), axis=-1)
 
 def spherical_metric(points):
-    return jnp.arccos(jnp.sum(points[:, None, :] * points[None, :, :], axis=-1) / jnp.linalg.norm(points[:, None, :], axis=-1) / jnp.linalg.norm(points[None, :], axis=-1))
+
+    # Square so the beta = 1 default works
+    #
+    return jnp.square(jnp.arccos(jnp.sum(points[:, None, :] * points[None, :, :], axis=-1) / jnp.linalg.norm(points[:, None, :], axis=-1) / jnp.linalg.norm(points[None, :], axis=-1)))
     return jnp.sqrt(1 - jnp.sum(points[:, None, :] * points[None, :, :], axis=-1) / (jnp.linalg.norm(points[:, None, :], axis=-1) * jnp.linalg.norm(points[None, :, :], axis=-1)))
 
 
 
 # ########## Spectral Representation ##########
-def compute_spectral_representation(events, omega_max = 2, beta = 2, dtype = jnp.float32, euclidean = True):
+def compute_spectral_representation(events, omega_max = 2, beta = 1.0, dtype = jnp.float32, euclidean = True):
         """Function to compute the spectral representation of a set of events. Must be compiled before use on batched events -- see SPECTER.compile().
-
+euclidean_distance_squared
         Args:
             events (ndarray): Array of events with shape (batch_size, pad, 3)
             omega_max (float, optional): Maximum omega value. Defaults to 2.
@@ -259,10 +262,16 @@ def cross_term_improved(s1, s2):
     # O(n2) parts -- calculate the cross term using the nonzero indices
     omega_n_omega_l = omega1s[i_indices] * omega2s[j_indices]
     minE = -jnp.maximum(Etot1 - cumulative_inclusive_1[i_indices], Etot2 - cumulative_inclusive_2[j_indices]) + jnp.minimum(Etot1 - cumulative_exclusive_1[i_indices], Etot2 -  cumulative_exclusive_2[j_indices])
-
-    # Sum over the nonzero indices
     cross = omega_n_omega_l * minE
-    cross_term = jnp.sum(cross * mask, axis = (-1))
+
+    # Get a mask of the places where omega_n_omega_l is nonzero
+    nonzero = omega_n_omega_l > 0
+    nonzero_cross = jnp.where(nonzero, cross, 0)
+    nonzero_mask = jnp.where(mask, nonzero, 0)
+
+
+
+    cross_term = jnp.sum(nonzero_cross * nonzero_mask, axis = (-1))
 
 
     return cross_term

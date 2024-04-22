@@ -263,11 +263,14 @@ def kT_N(events, N, R):
         # Set up 4-vectors
         four_vectors = []
         for particle in event:
+
+            # Important that this is a list () and not a tuple []
             four_vectors.append((particle[0], particle[1], particle[2], 0))
+            
         four_vectors = np.array(four_vectors, dtype=[("pt", "f8"), ("eta", "f8"), ("phi", "f8"), ("mass", "f8")])
 
         # Cluster with kT (p = 1)
-        sequence = cluster(four_vectors, R=R, p=1)
+        sequence = cluster(four_vectors, R=R, p=1, )
         subjets = sequence.exclusive_jets(N)
 
         output = np.zeros((N, 3))
