@@ -179,6 +179,7 @@ class Observable():
         losses = np.ones((epochs,events.shape[0])) * 99999
         early_stopping_counter = np.zeros((events.shape[0],), dtype = np.int32)
         early_stopping_mask = jnp.ones((events.shape[0],), dtype = np.bool)
+        is_done = jnp.ones((events.shape[0],), dtype = np.bool)
         best_params = params.copy()
         params_history = []
 
@@ -224,7 +225,8 @@ class Observable():
 
             if epoch >= 1:
                 mins = jnp.min(losses[early_stopping_epoch:epoch], axis=0)
-                early_stopping_mask = early_stopping_mask & (early_stopping_counter < early_stopping)
+                # early_stopping_mask = early_stopping_mask & (early_stopping_counter < early_stopping)
+                is_done = is_done & (early_stopping_counter < early_stopping)
                 losses[epoch] = jnp.where(early_stopping_mask, unmasked_sEMD, mins)
                 early_stopping_counter = jnp.where(losses[epoch] >= mins, early_stopping_counter + 1, 0)
                 
@@ -237,7 +239,7 @@ class Observable():
                     mask_broadcasted = lax.broadcast_in_dim(update_mask, best_params[key].shape, broadcast_dimensions=(0,))
                     best_params[key] = lax.select(mask_broadcasted, new_params[key], best_params[key])
                     
-            frac = 1 - np.sum(early_stopping_mask)/events.shape[0]
+            frac = 1 - np.sum(is_done)/events.shape[0]
 
             if verbose:
                 current_time = time()
