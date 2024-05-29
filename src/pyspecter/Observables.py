@@ -21,10 +21,17 @@ from pyspecter.SpectralEMD_Helper import ds2_events1_spectral2, compute_spectral
 
 class Observable():
 
-    def __init__(self, sampler, name, initializer = None, projector = None, is_trivial = False):
+    def __init__(self, sampler, name, metric_type = "euclidean", initializer = None, projector = None, is_trivial = False, hard_compute_function = None):
 
         self.sampler = sampler
         self.name = name
+
+        self.metric_type = metric_type
+        self.is_euclidean = metric_type == "euclidean"
+
+        if metric_type not in ["euclidean", "spherical"]:
+            raise ValueError("Invalid metric type. Must be 'euclidean' or 'spherical'")
+
 
         if initializer is not None:
             self.initializer = initializer
@@ -39,6 +46,8 @@ class Observable():
         self.is_trivial = is_trivial
         self.skip_vmap_initialization = False
         # self.is_trivial = (len(list(self.param_dict.keys())) == 0)
+
+        self.hard_compute_function = hard_compute_function
 
 
     # Compile the training loop, along with vmaps and gradients
@@ -65,6 +74,8 @@ class Observable():
             vmapped_finite_differences_gradient = vmap(self.finite_differences_gradient, in_axes = (None, 0, 0, 0, None))
             vmapped_gradient_and_loss = vmap(self.gradient_and_loss, in_axes = (None, 0, 0, None))
 
+            if self.hard_compute_function is not None:
+                vmapped_hard_compute = vmap(self.hard_compute_function, in_axes = (0,))
 
             # Compile everything
             self.compiled_compute_spectral_representation = jit(compute_spectral_representation)
@@ -79,6 +90,9 @@ class Observable():
             self.vmapped_finite_differences_gradient = jit(vmapped_finite_differences_gradient, static_argnums=(4,))
             self.vmapped_gradient_and_loss = jit(vmapped_gradient_and_loss, static_argnums=(3,))
 
+            if self.hard_compute_function is not None:
+                self.vmapped_hard_compute = jit(vmapped_hard_compute)
+
         else:
 
             print("Compiling with vmap after jit")
@@ -91,6 +105,9 @@ class Observable():
             jit_projector = jit(self.projector)
             jit_finite_differences_gradient = jit(self.finite_differences_gradient, static_argnums=(4,))
             jit_gradient_and_loss = jit(self.gradient_and_loss, static_argnums=(3,))
+            if self.hard_compute_function is not None:
+                jit_hard_compute = jit(self.hard_compute_function)
+
 
             # vmapped everything
             self.vmapped_compute_spectral_representation = vmap(jit_compute_spectral_representation, in_axes = (0,))
@@ -104,7 +121,8 @@ class Observable():
             self.vmapped_projector = vmap(jit_projector, in_axes = (0,))
             self.vmapped_finite_differences_gradient = vmap(jit_finite_differences_gradient, in_axes = (None, 0, 0, 0, None))
             self.vmapped_gradient_and_loss = vmap(jit_gradient_and_loss, in_axes = (None, 0, 0, None))
-
+            if self.hard_compute_function is not None:
+                self.vmapped_hard_compute = vmap(jit_hard_compute)
 
 
         if test_events is not None:
@@ -113,7 +131,7 @@ class Observable():
     def compute_single_event(self, event, learning_rate = 0.001, epochs = 150, N_sample = 25, finite_difference = False, seed = 0, verbose = True):
 
         # Initialize
-        spectral_event = self.compiled_compute_spectral_representation(event)
+        spectral_event = self.compiled_compute_spectral_representation(event, euclidean = self.is_euclidean)
         params =   self.initializer(event, N_sample, seed)
 
         # Optimizer
@@ -166,7 +184,7 @@ class Observable():
     def compute(self, events, learning_rate = 0.001, epochs = 150, early_stopping = 10, early_stopping_fraction = 0.95, N_sample = 25, finite_difference = False, seed = 0, verbose = True):
 
         # Initialize
-        spectral_event = self.vmapped_compute_spectral_representation(events)
+        spectral_event = self.vmapped_compute_spectral_representation(events, euclidean = self.is_euclidean)
         params =   self.vmapped_initializer(events, N_sample, seed)
         start_time = time()
         time_history = [start_time]
@@ -252,6 +270,19 @@ class Observable():
 
         return jnp.min(losses, axis = 0), best_params, losses, params_history
 
+
+    def hard_compute(self, events):
+        
+
+        if self.hard_compute_function is None:
+            raise ValueError("No hard compute function is defined for this observable")
+        
+
+        spectral_events = self.vmapped_compute_spectral_representation(events, euclidean = self.is_euclidean)
+
+        losses, params = self.vmapped_hard_compute(spectral_events)
+
+        return losses, params
 
 
     def sample(self, params, n_samples, seed):
