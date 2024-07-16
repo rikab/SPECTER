@@ -15,7 +15,7 @@ import jax.example_libraries.optimizers as jax_opt
 
 
 
-from pyspecter.SpectralEMD_Helper import ds2_events1_spectral2, compute_spectral_representation
+from pyspecter.SpectralEMD_Helper import ds2, compute_spectral_representation
 
 
 
@@ -26,11 +26,17 @@ class Observable():
         self.sampler = sampler
         self.name = name
 
+        # ##### Metric Choice #####
         self.metric_type = metric_type
         self.is_euclidean = metric_type == "euclidean"
 
         if metric_type not in ["euclidean", "spherical"]:
             raise ValueError("Invalid metric type. Must be 'euclidean' or 'spherical'")
+
+        if self.is_euclidean:
+            self.csr = compute_spectral_representation
+        else:
+            self.csr = compute_spectral_representation_spherical
 
 
         if initializer is not None:
@@ -50,6 +56,9 @@ class Observable():
         self.hard_compute_function = hard_compute_function
 
 
+    
+
+
     # Compile the training loop, along with vmaps and gradients
     def compile(self, test_events = None, vmap_before_jit = False, **kwargs):
 
@@ -62,9 +71,8 @@ class Observable():
             print("Compiling with vmap before jit")
 
             # vmap everything
-            vmapped_compute_spectral_representation = vmap(compute_spectral_representation, in_axes = (0,))
+            vmapped_compute_spectral_representation = vmap(self.csr, in_axes = (0,))
             vmapped_train_step = vmap(self.train_step, in_axes = (None, 0, 0, None))
-
             if self.skip_vmap_initialization:
                 vmapped_initializer = self.initializer
             else:
@@ -78,7 +86,7 @@ class Observable():
                 vmapped_hard_compute = vmap(self.hard_compute_function, in_axes = (0,))
 
             # Compile everything
-            self.compiled_compute_spectral_representation = jit(compute_spectral_representation)
+            self.compiled_compute_spectral_representation = jit(self.csr)
             self.vmapped_compute_spectral_representation = jit(vmapped_compute_spectral_representation)
             self.vmapped_train_step = jit(vmapped_train_step, static_argnums= (3,))
             if self.skip_vmap_initialization:
@@ -98,7 +106,7 @@ class Observable():
             print("Compiling with vmap after jit")
 
             # Compile everything
-            jit_compute_spectral_representation = jit(compute_spectral_representation)
+            jit_compute_spectral_representation = jit(self.csr)
             jit_train_step = jit(self.train_step, static_argnums=(3,))
             jit_gradient_train_step = jit(self.gradient_train_step, static_argnums=(3,))
             jit_initializer = jit(self.initializer)
@@ -131,7 +139,7 @@ class Observable():
     def compute_single_event(self, event, learning_rate = 0.001, epochs = 150, N_sample = 25, finite_difference = False, seed = 0, verbose = True):
 
         # Initialize
-        spectral_event = self.compiled_compute_spectral_representation(event, euclidean = self.is_euclidean)
+        spectral_event = self.compiled_compute_spectral_representation(event)
         params =   self.initializer(event, N_sample, seed)
 
         # Optimizer
@@ -146,7 +154,7 @@ class Observable():
         # If observable is trivial, just do a single iteration
         if self.is_trivial:
             sEMD = self.train_step(0, spectral_event, params, N_sample)
-            return sEMD, params, losses
+            return sEMD, params, losses, param_history
         
         for epoch in range(epochs):
 
@@ -184,7 +192,7 @@ class Observable():
     def compute(self, events, learning_rate = 0.001, epochs = 150, early_stopping = 10, early_stopping_fraction = 0.95, N_sample = 25, finite_difference = False, seed = 0, verbose = True):
 
         # Initialize
-        spectral_event = self.vmapped_compute_spectral_representation(events, euclidean = self.is_euclidean)
+        spectral_event = self.vmapped_compute_spectral_representation(events)
         params =   self.vmapped_initializer(events, N_sample, seed)
         start_time = time()
         time_history = [start_time]
@@ -200,6 +208,10 @@ class Observable():
         is_done = jnp.ones((events.shape[0],), dtype = np.bool)
         best_params = params.copy()
         params_history = []
+
+        if self.is_trivial:
+            sEMD = self.vmapped_train_step(0, spectral_event, params, N_sample)
+            return sEMD, params, losses, params_history
 
         for epoch in range(epochs):
 
@@ -278,7 +290,7 @@ class Observable():
             raise ValueError("No hard compute function is defined for this observable")
         
 
-        spectral_events = self.vmapped_compute_spectral_representation(events, euclidean = self.is_euclidean)
+        spectral_events = self.vmapped_compute_spectral_representation(events)
 
         losses, params = self.vmapped_hard_compute(spectral_events)
 
@@ -298,7 +310,8 @@ class Observable():
     def train_step(self, epoch, spectral_event, params, sample_N, seed = 0):
 
         shape_event = self.sample(params, sample_N, seed = epoch + seed)
-        sEMDS = checkpoint(ds2_events1_spectral2)(shape_event, spectral_event)
+        spectral_shape = self.csr(shape_event)
+        sEMDS = checkpoint(ds2)(spectral_shape, spectral_event)
         return sEMDS
     
 
@@ -354,3 +367,19 @@ def replace_params_in_state(opt_state, new_params):
         # Leaf node or unknown type, return unchanged
         return opt_state
 
+
+
+def compute_spectral_representation_spherical(events, omega_max = 2, beta = 1, dtype = jnp.float32):
+    """Function to compute the spectral representation of a set of events. Must be compiled before use on batched events -- see SPECTER.compile().
+
+    Args:
+        events (ndarray): Array of events with shape (batch_size, pad, 3)
+        omega_max (float, optional): Maximum omega value. Defaults to 2.
+        beta (float, optional): Beta value for the spectral representation. Defaults to 1.
+        dtype (jax.numpy.dtype, optional): Data type for the output. Defaults to jax.numpy.float32.
+
+    Returns:
+        ndarray: Spectral representation of the events with shape (batch_size, pad*(pad-1)/2, 2)
+    """
+
+    return compute_spectral_representation(events, omega_max, beta, dtype, euclidean=False)
