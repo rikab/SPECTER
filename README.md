@@ -1,6 +1,9 @@
 # SPECTER (v1.0.0)
 
-[![GitHub Project](https://img.shields.io/badge/GitHub--blue?style=social&logo=GitHub)](https://github.com/rikab/shaper)
+[![GitHub Project](https://img.shields.io/badge/GitHub--blue?style=social&logo=GitHub)](https://github.com/rikab/SPECTER)
+
+[![PyPI version](https://img.shields.io/pypi/v/pyspecter.svg)](https://pypi.org/project/pyspecter/)
+[![Supported Python versions](https://img.shields.io/pypi/pyversions/pyspecter.svg)](https://pypi.org/project/pyspecter/)
 
 
 `SPECTER` is an implementation of the Spectral EMD (SEMD) and Spectral Shape Observables as outlined in ["SPECTER: fficient Evaluation of the Spectral EMD" (arxiv:2410.XXXXX)](https://arxiv.org/abs/2410.XXXXX). This package can be used for evaluating an extremely large class of IRC-safe observables, with modules in place to define custom observables and jet algorithms using an intuitive geometric language. Compared to ordinary EMD methods, this package is extremely fast, precise, and accurate. The SEMD is first defined in (arxiv:2305.03751)[https://arxiv.org/abs/2305.03751].
@@ -18,7 +21,19 @@ The code used to perform all of the studies in ["SPECTER: fficient Evaluation of
 
 ## Installation
 
-To install SPECTER, first clone this repository. Then, in the root directory of the repository, run the following command:
+### From PyPI
+
+In your Python environment run
+
+```
+python -m pip install pyshaper
+# python -m pip install --upgrade 'pyshaper[all]'  # for all extras
+```
+
+### From this repository locally
+
+In your Python environment from the top level of this repository run:
+
 
 ```bash
 pip install -.
