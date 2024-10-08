@@ -39,7 +39,8 @@ dependencies = [
     "scipy>=1.5.1",
     "matplotlib>=3.5.0",
     "numpy",  # compatible versions controlled through scipy
-    "rikabplotlib@git+https://github.com/rikab/rikabplotlib"
+    "rikabplotlib@git+https://github.com/rikab/rikabplotlib",
+    "particleloader@git+https://github.com/rikab/ParticleLoader"
 ]
 
 [tool.hatch.metadata]

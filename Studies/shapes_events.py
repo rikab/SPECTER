@@ -31,28 +31,7 @@ events_dir = "/n/holyscratch01/iaifi_lab/rikab/ee_dijets/lep_dijets.npy"
 
 dataset_open = load("SPECTER_ee_dijets", 100000, "/n/holyscratch01/iaifi_lab/rikab/.ParticleLoader").astype(np.float64)[:,:128,:]
 
-# for (i, x) in enumerate(dataset_open):
 
-
-#     # theta = np.arccos(x[:,3] / x[:,0])
-#     # eta = -np.log(np.tan(theta / 2))
-
-#     # ETA_MAX = 4
-#     # eta_cut = np.abs(eta) < ETA_MAX
-#     # x = x * np.nan_to_num(eta_cut[:,None])
-
-
-#     energies = x[:,0]
-#     total_energy = np.sum(energies)
-#     x[:,0] = energies / total_energy
-#     x[:,1] = x[:,1] / total_energy
-#     x[:,2] = x[:,2] / total_energy
-#     x[:,3] = x[:,3] / total_energy
-
-#     # Sort x by x[:,0] in descending order
-#     x = x[np.argsort(x[:,0])[::-1]]
-
-    # dataset_open[i] = x
 
 dataset_open = dataset_open[:, :250]
 dataset_open = dataset_open[:, :, :4]
