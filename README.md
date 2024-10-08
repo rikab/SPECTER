@@ -1,10 +1,18 @@
-# SPECTER 
+# SPECTER (v1.0.0)
 
-Implementation of the Spectral EMD as outlined in https://arxiv.org/abs/2305.03751. 
+[![GitHub Project](https://img.shields.io/badge/GitHub--blue?style=social&logo=GitHub)](https://github.com/rikab/shaper)
 
-## Usage
 
-See `examples/pairwise_spectral_emd.ipynb` for an end-to-end example of how to use SPECTER.
+`SPECTER` is an implementation of the Spectral EMD (SEMD) and Spectral Shape Observables as outlined in ["SPECTER: fficient Evaluation of the Spectral EMD" (arxiv:2410.XXXXX)](https://arxiv.org/abs/2410.XXXXX). This package can be used for evaluating an extremely large class of IRC-safe observables, with modules in place to define custom observables and jet algorithms using an intuitive geometric language. Compared to ordinary EMD methods, this package is extremely fast, precise, and accurate. The SEMD is first defined in (arxiv:2305.03751)[https://arxiv.org/abs/2305.03751].
+
+
+
+## Example Usage
+
+Several end-to-end examples of how to use `SPECTER` can be found in the `examples` subfolder of this repository. This examples include computing pairwise SEMDs, computing spectral shape observables, and some basic image manipulation. 
+
+The code used to perform all of the studies in ["SPECTER: fficient Evaluation of the Spectral EMD" (arxiv:2410.XXXXX)](https://arxiv.org/abs/2410.XXXXX) can be found in the `studies` subfolder.
+
 
 ## Installation
 
@@ -13,7 +21,6 @@ To install SPECTER, first clone this repository. Then, in the root directory of 
 ```bash
 pip install -.
 ```
-
 
 
 ## Dependencies
@@ -27,11 +34,12 @@ pip install --upgrade pip
 pip install --upgrade jax jaxlib==0.1.69+cuda111 -f https://storage.googleapis.com/jax-releases/jax_releases.html
 ```
 
+Many of the examples and studies depend on the [ParticleLoader](https://github.com/rikab/ParticleLoader) package for downloading particle physics datasets. However, this package is not necessary for general usage of `SPECTER`
+
 ## Changelog
 
-* 20 July 2023: JAX-enabled gradient optimization
-* 20 June 2023: coded spectral representation
+- v1.0.0: 8 October 2024. Official public release.
 
-## Contact
+Based on the work in ["SPECTER: fficient Evaluation of the Spectral EMD" (arxiv:2410.XXXXX)](https://arxiv.org/abs/2410.XXXXX)
 
-Please contact me at rikab@mit.edu with any questions, concerns, comments, or found bugs.
+Bugs, Fixes, Ideas, or Questions? Contact me at rikab@mit.edu
