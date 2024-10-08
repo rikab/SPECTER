@@ -5,10 +5,21 @@ import subprocess
 # Function to dynamically fetch the version from VCS (git in this case)
 def get_version():
     try:
-        version = subprocess.check_output(["git", "describe", "--tags"]).strip().decode("utf-8")
+        # Get the output from git describe
+        version = subprocess.check_output(["git", "describe", "--tags", "--long"]).strip().decode("utf-8")
+        
+        # Remove the leading 'v' (if present) and convert the version to a valid PEP 440 format
+        # Example: v1.0.1-1-g68c95a7 -> 1.0.1+1.g68c95a7
+        match = re.match(r"v?(\d+\.\d+\.\d+)(?:-(\d+)-g([0-9a-f]+))?", version)
+        if match:
+            base_version = match.group(1)  # 1.0.1
+            if match.group(2):  # Handle non-tagged commits (e.g., 1 commit after tag)
+                version = f"{base_version}+{match.group(2)}.g{match.group(3)}"  # 1.0.1+1.g68c95a7
+            else:
+                version = base_version  # If it's exactly a tagged version
         return version
     except Exception:
-        return "0.0.1"  # Default/fallback version if VCS version not available
+        return "0.0.1"  # Fallback if no version info is found
 
 setup(
     name="pyspecter",
