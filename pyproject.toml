@@ -6,7 +6,7 @@ requires = [
 build-backend = "hatchling.build"
 
 [project]
-name = "pyspecter"
+name = "specterpy"
 dynamic = ["version"]
 description = "framework for defining, building, and evaluating generalized shape observables for collider physics"
 readme = "README.md"
