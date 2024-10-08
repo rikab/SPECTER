@@ -23,7 +23,7 @@ def get_version():
 
 
 setup(
-    name="pyspecter",
+    name="specterpy",
     version=get_version(),  # Dynamic versioning based on VCS
     description="Framework for defining, building, and evaluating generalized shape observables for collider physics",
     long_description=open("README.md").read(),
