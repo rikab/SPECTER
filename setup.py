@@ -47,7 +47,7 @@ setup(
         "scipy>=1.5.1",
         "matplotlib>=3.5.0",
         "numpy",  # scipy controls compatible numpy versions
-        "rikabplotlib,
+        "rikabplotlib",
         "particleloader"
     ],
     classifiers=[
