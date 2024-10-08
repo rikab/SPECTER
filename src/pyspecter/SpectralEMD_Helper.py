@@ -17,7 +17,11 @@ def spherical_metric(points):
 
     # Square so the beta = 1 default works
     #
-    return jnp.square(jnp.arccos(jnp.sum(points[:, None, :] * points[None, :, :], axis=-1) / jnp.linalg.norm(points[:, None, :], axis=-1) / jnp.linalg.norm(points[None, :], axis=-1)))
+    return jnp.nan_to_num(jnp.square(1 - (jnp.sum(points[:, None, :] * points[None, :, :], axis=-1) / jnp.linalg.norm(points[:, None, :], axis=-1) / jnp.linalg.norm(points[None, :], axis=-1))))
+
+
+
+    return jnp.nan_to_num(jnp.square(jnp.arccos(jnp.sum(points[:, None, :] * points[None, :, :], axis=-1) / jnp.linalg.norm(points[:, None, :], axis=-1) / jnp.linalg.norm(points[None, :], axis=-1))))
     return jnp.sqrt(1 - jnp.sum(points[:, None, :] * points[None, :, :], axis=-1) / (jnp.linalg.norm(points[:, None, :], axis=-1) * jnp.linalg.norm(points[None, :, :], axis=-1)))
 
 
@@ -254,8 +258,8 @@ def cross_term_improved(s1, s2):
 
     # Determine which indices survive the theta function O(n^2)
     indices, mask = find_indices(cumulative_inclusive_1, cumulative_inclusive_2)
-    indices = jax.lax.stop_gradient(indices)
-    mask = jax.lax.stop_gradient(mask)
+    # indices = jax.lax.stop_gradient(indices)
+    # mask = jax.lax.stop_gradient(mask)
     i_indices, j_indices = indices[:,0], indices[:,1]
 
     

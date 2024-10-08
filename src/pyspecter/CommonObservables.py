@@ -42,17 +42,17 @@ def build_jet_observables(R = 0.5):
 
         omegas = spectral_event[:,0]
         two_EE = spectral_event[:,1]
-        E_tot = jnp.sum(two_EE)
+        E_tot2 = jnp.sum(two_EE)
 
         # Cumulative spectral function, inclusive and exclusive
         cumulative_spectral_function = jnp.cumsum(two_EE)
         cumulative_exclusive = cumulative_spectral_function - two_EE
 
         term0 = two_EE
-        term1 = 2/3 / E_tot * jnp.power(E_tot - cumulative_spectral_function, 3/2)
-        term2 = 2/3 / E_tot * jnp.power(E_tot - cumulative_exclusive, 3/2)
+        term1 = 2/3 / E_tot2 * jnp.power(E_tot2 - cumulative_spectral_function, 3/2)
+        term2 = 2/3 / E_tot2 * jnp.power(E_tot2 - cumulative_exclusive, 3/2)
 
-        l_opt = 6 * jnp.sum(omegas * (term0 + term1 - term2)) / E_tot**2
+        l_opt = 6 * jnp.sum(omegas * (term0 + term1 - term2)) / E_tot2
         semd_opt = jnp.sum(omegas**2 * two_EE) -   l_opt**2 /6
 
         return semd_opt, l_opt
@@ -181,6 +181,16 @@ def build_jet_observables(R = 0.5):
         semd_opt = jnp.sum(omegas**2 * two_EE)
 
         return semd_opt, 0
+    
+    def _2spronginess_hard_compute_function(spectral_events):
+
+        omegas = spectral_events[:,0]
+        two_EE = spectral_events[:,1]
+        E_tot = jnp.sum(two_EE)
+
+        semd_opt = jnp.sum(omegas**2 * two_EE)
+
+        return semd_opt, 0
 
     _1spronginess = build_n_spronginess(1)
     _1spronginess.hard_compute_function = _1spronginess_hard_compute_function
@@ -259,11 +269,37 @@ def build_event_observables():
     
     def project_uniform(params):
         return params
+    
+
+    def temp_f(cumulative, E_tot2):
+
+        term1 = jnp.sqrt(E_tot2 - cumulative) * jnp.sqrt(cumulative)
+        term2 = cumulative * jnp.arccos(1 - 2 * cumulative / E_tot2)
+        term3 = E_tot2 * jnp.arcsin( jnp.sqrt(cumulative) / jnp.sqrt(E_tot2))
+
+        return term1 + term2 - term3
 
 
+    def hard_compute_uniform(spectral_event):
+
+        omegas = spectral_event[:,0]
+        two_EE = spectral_event[:,1]
+        E_tot2 = jnp.sum(two_EE)
+
+        # Cumulative spectral function, inclusive and exclusive
+        cumulative_spectral_function = jnp.cumsum(two_EE)
+        cumulative_exclusive = cumulative_spectral_function - two_EE
+
+        term1 = jnp.sum(two_EE * omegas * (omegas))
+        term2 = (jnp.pi**2 - 4) * E_tot2 / 2 
+        term3 = -2 * jnp.sum(omegas * (temp_f(cumulative_spectral_function, E_tot2) - temp_f(cumulative_exclusive, E_tot2)))
+
+        semd_opt = term1 + term2 + term3
+
+        return semd_opt, 0
 
 
-    _spisotropy = Observable(sample_uniform, name = "spIsotropy", initializer=initialize_uniform, projector=project_uniform, metric_type = "spherical", is_trivial=True)
+    _spisotropy = Observable(sample_uniform, name = "spIsotropy", initializer=initialize_uniform, projector=project_uniform, hard_compute_function= hard_compute_uniform, metric_type = "spherical", is_trivial=True)
     _spisotropy.compile()
 
     # %%%%%%%%%% RINGINESS %%%%%%%%%%
@@ -292,7 +328,7 @@ def build_event_observables():
 
         omegas = spectral_event[:,0]
         two_EE = spectral_event[:,1]
-        E_tot = jnp.sum(two_EE)
+        E_tot2 = jnp.sum(two_EE)
 
         # Cumulative spectral function, inclusive and exclusive
         cumulative_spectral_function = jnp.cumsum(two_EE)
@@ -300,8 +336,8 @@ def build_event_observables():
 
         
         term1 = jnp.sum(two_EE * omegas * (omegas - 2*jnp.pi))
-        term2 = jnp.pi**2 * E_tot**2 / 3
-        term3 = (jnp.pi / E_tot**2) * jnp.sum(omegas * ((E_tot - cumulative_exclusive)**2 - (E_tot - cumulative_spectral_function)**2))
+        term2 = jnp.pi**2 * E_tot2 / 3
+        term3 = (jnp.pi / E_tot2) * jnp.sum(omegas * ((E_tot2 - cumulative_exclusive)**2 - (E_tot2 - cumulative_spectral_function)**2))
 
         semd_opt = term1 + term2 + term3
         
@@ -358,26 +394,63 @@ def build_event_observables():
 
     def sample_thrust(params, N, seed):
 
+        z = params["Energy"]
+        zbar = 1 - z
+
         key = random.PRNGKey(seed)
 
         phi = jnp.array([0., jnp.pi])
         theta = jnp.pi / 2 * jnp.ones_like(phi)
+        zs = jnp.array([z, zbar])
+
     
-        event = jnp.column_stack([jnp.ones(2) / 2, theta, phi])
+        event = jnp.column_stack([zs, theta, phi])
         event = spherical_to_4vector(event)
 
         return event
     
     def initialize_thrust(event, N, seed):
-        return {}
+        key = random.PRNGKey(seed)
+        z = random.uniform(key, shape=(1,), minval=0., maxval=1)
+        return {"Energy" : 0.5}
     
     def project_thrust(params):
         return params
 
     
     
-    _sthrust = Observable(sample_thrust, name = "sThrust", initializer=initialize_thrust, projector=project_thrust, metric_type = "spherical", is_trivial=True)
+    _sthrust = Observable(sample_thrust, name = "sThrust", initializer=initialize_thrust, projector=project_thrust, metric_type = "spherical", is_trivial=False)
     _sthrust.compile()
+
+
+
+    def sample_dipole(params, N, seed):
+
+        z = 0.5
+        zbar = 1 - z
+
+        key = random.PRNGKey(seed)
+
+        phi = jnp.array([0., jnp.pi])
+        theta = jnp.pi / 2 * jnp.ones_like(phi)
+        zs = jnp.array([z, zbar])
+
+    
+        event = jnp.column_stack([zs, theta, phi])
+        event = spherical_to_4vector(event)
+
+        return event
+    
+    def initialize_dipole(event, N, seed):
+        return {}
+    
+    def project_dipole(params):
+        return params
+
+    
+    
+    _sdipole = Observable(sample_dipole, name = "sDipole", initializer=initialize_dipole, projector=project_dipole, metric_type = "spherical", is_trivial=True)
+    _sdipole.compile()
 
 
     observables_dict["spIsotropy"] = _spisotropy
@@ -386,6 +459,8 @@ def build_event_observables():
     observables_dict["2-sPronginess"] = _2spronginess
     observables_dict["3-sPronginess"] = _3spronginess
     observables_dict["sThrust"] = _sthrust
+    observables_dict["sDipole"] = _sdipole
+
 
 
 
