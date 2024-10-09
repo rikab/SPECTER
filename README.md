@@ -26,8 +26,7 @@ The code used to perform all of the studies in ["SPECTER: fficient Evaluation of
 In your Python environment run
 
 ```
-python -m pip install pyshaper
-# python -m pip install --upgrade 'pyshaper[all]'  # for all extras
+python -m pip install specterpy
 ```
 
 ### From this repository locally
