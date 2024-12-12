@@ -6,7 +6,7 @@
 [![Supported Python versions](https://img.shields.io/pypi/pyversions/pyspecter.svg)](https://pypi.org/project/pyspecter/)
 
 
-`SPECTER` is an implementation of the Spectral EMD (SEMD) and Spectral Shape Observables as outlined in ["SPECTER: fficient Evaluation of the Spectral EMD" (arxiv:2410.XXXXX)](https://arxiv.org/abs/2410.XXXXX). This package can be used for evaluating an extremely large class of IRC-safe observables, with modules in place to define custom observables and jet algorithms using an intuitive geometric language. Compared to ordinary EMD methods, this package is extremely fast, precise, and accurate. The SEMD is first defined in (arxiv:2305.03751)[https://arxiv.org/abs/2305.03751].
+`SPECTER` is an implementation of the Spectral EMD (SEMD) and Spectral Shape Observables as outlined in ["SPECTER: fficient Evaluation of the Spectral EMD" (arxiv:2410.2410.05379)](https://arxiv.org/abs/2410.XXXXX). This package can be used for evaluating an extremely large class of IRC-safe observables, with modules in place to define custom observables and jet algorithms using an intuitive geometric language. Compared to ordinary EMD methods, this package is extremely fast, precise, and accurate. The SEMD is first defined in (arxiv:2305.03751)[https://arxiv.org/abs/2305.03751].
 
 ![](example_plot.png)
 
@@ -16,7 +16,7 @@
 
 Several end-to-end examples of how to use `SPECTER` can be found in the `examples` subfolder of this repository. This examples include computing pairwise SEMDs, computing spectral shape observables, and some basic image manipulation. 
 
-The code used to perform all of the studies in ["SPECTER: fficient Evaluation of the Spectral EMD" (arxiv:2410.XXXXX)](https://arxiv.org/abs/2410.XXXXX) can be found in the `studies` subfolder.
+The code used to perform all of the studies in ["SPECTER: fficient Evaluation of the Spectral EMD" (arxiv:2410.2410.05379)](https://arxiv.org/abs/2410.2410.05379) can be found in the `studies` subfolder.
 
 
 ## Installation
