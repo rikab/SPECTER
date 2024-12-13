@@ -129,6 +129,7 @@ class Observable():
             self.vmapped_projector = vmap(jit_projector, in_axes = (0,))
             self.vmapped_finite_differences_gradient = vmap(jit_finite_differences_gradient, in_axes = (None, 0, 0, 0, None))
             self.vmapped_gradient_and_loss = vmap(jit_gradient_and_loss, in_axes = (None, 0, 0, None))
+            self.vmapped_ensemble_gradient_and_loss = vmap(jit_gradient_and_loss, in_axes = (None, 0, None, None))
             if self.hard_compute_function is not None:
                 self.vmapped_hard_compute = vmap(jit_hard_compute)
 
@@ -281,6 +282,101 @@ class Observable():
                 break     
 
         return jnp.min(losses, axis = 0), best_params, losses, params_history
+
+
+    def ensemble_compute(self, events, learning_rate = 0.001, epochs = 150, early_stopping = 10, early_stopping_fraction = 0.95, N_sample = 25, finite_difference = False, seed = 0, verbose = True):
+
+        # Initialize
+        spectral_event = self.vmapped_compute_spectral_representation(events)
+        params =   self.initializer(events, N_sample, seed)
+        start_time = time()
+        time_history = [start_time]
+
+        # Optimizer
+        opt_state = None
+        opt_init, opt_update, get_params = jax_opt.adam(learning_rate)
+        opt_state = opt_init(params)
+
+        losses = np.ones((epochs,events.shape[0])) * 99999
+        early_stopping_counter = np.zeros((events.shape[0],), dtype = np.int32)
+        early_stopping_mask = jnp.ones((events.shape[0],), dtype = np.bool)
+        is_done = jnp.ones((events.shape[0],), dtype = np.bool)
+        best_params = params.copy()
+        params_history = []
+
+        if self.is_trivial:
+            sEMD = self.vmapped_train_step(0, spectral_event, params, N_sample)
+            return sEMD, params, losses, params_history
+
+        for epoch in range(epochs):
+
+            params = get_params(opt_state)
+            params = self.vmapped_projector(params)
+            params_history.append(params)
+
+            masked_spectral_events = spectral_event[early_stopping_mask]
+            masked_params = params
+
+            
+            if  finite_difference:
+                sEMD = self.vmapped_train_step(epoch, masked_spectral_events, masked_params, N_sample)
+                masked_grads = self.vmapped_finite_differences_gradient(epoch, sEMD, masked_spectral_events, masked_params, N_sample)
+            else:
+                sEMD, masked_grads = self.vmapped_ensemble_gradient_and_loss(epoch, masked_spectral_events, masked_params, N_sample)
+            
+            # Unmask the gradients and sEMD
+            grads = {k: jnp.zeros_like(v) for k, v in params.items()}
+            for key in grads.keys():
+                grads[key] = grads[key].at[early_stopping_mask].set(masked_grads[key])
+            unmasked_sEMD = jnp.zeros_like(losses[epoch])
+            unmasked_sEMD = unmasked_sEMD.at[early_stopping_mask].set(sEMD)
+
+            # Fix NaNs
+            for key in grads.keys():
+                grads[key] = jnp.nan_to_num(grads[key])
+
+            # Gradient update
+            opt_state = opt_update(epoch, grads, opt_state)
+
+           # Apply the separate function to modify the parameters
+            new_params = self.vmapped_projector(get_params(opt_state))
+
+            # Manually modify the opt_state's parameters without resetting internal state
+            opt_state = replace_params_in_state(opt_state, new_params)
+            losses[epoch] = jnp.where(early_stopping_mask, unmasked_sEMD, losses[epoch-1])
+
+            # if the loss has not changed in 10 epochs, stop
+            early_stopping_epoch = max(epoch - early_stopping, 0)
+
+            if epoch >= 1:
+                mins = jnp.min(losses[early_stopping_epoch:epoch], axis=0)
+                # early_stopping_mask = early_stopping_mask & (early_stopping_counter < early_stopping)
+                is_done = is_done & (early_stopping_counter < early_stopping)
+                losses[epoch] = jnp.where(early_stopping_mask, unmasked_sEMD, mins)
+                early_stopping_counter = jnp.where(losses[epoch] >= mins, early_stopping_counter + 1, 0)
+                
+
+                # Update best_params for events where loss has decreased
+                update_mask = unmasked_sEMD < losses[epoch-1]
+                for key in params.keys():
+
+                    # add None dimensions to update_mask to match the shape of new_params[key]
+                    mask_broadcasted = lax.broadcast_in_dim(update_mask, best_params[key].shape, broadcast_dimensions=(0,))
+                    best_params[key] = lax.select(mask_broadcasted, new_params[key], best_params[key])
+                    
+            frac = 1 - np.sum(is_done)/events.shape[0]
+
+            if verbose:
+                current_time = time()
+                time_history.append(current_time)
+                print(f"{self.name}: Epoch {epoch} of {epochs}, Mean Loss: {jnp.mean(losses[epoch]) : .3e}, Time: {current_time - start_time : .3f}s ({time_history[-1] - time_history[-2] : .3f}s), Early Stopping: {frac : .3f}")
+
+
+            if np.all(~early_stopping_mask) or frac > early_stopping_fraction:
+                break     
+
+        return jnp.min(losses, axis = 0), best_params, losses, params_history
+
 
 
     def hard_compute(self, events):
