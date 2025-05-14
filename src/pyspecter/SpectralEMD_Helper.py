@@ -51,7 +51,7 @@ def spherical_metric_cross(points1, points2):
 
 
 # ########## Spectral Representation ##########
-def compute_spectral_representation(events, omega_max = 2, beta = 1.0, dtype = jnp.float32, euclidean = True, cylindrical = False):
+def compute_spectral_representation(events, omega_max = 2, beta = 1.0, dtype = jnp.float32, euclidean = True):
         """Function to compute the spectral representation of a set of events. Must be compiled before use on batched events -- see SPECTER.compile().
 euclidean_distance_squared
         Args:
@@ -70,9 +70,6 @@ euclidean_distance_squared
 
         euclidean_distance_squared = jax.lax.cond(euclidean, euclidean_metric, spherical_metric, points)
 
-        # If cylindrical, use cylindrical metric
-        euclidean_distance_squared = jax.lax.cond(cylindrical, cylindrical_metric, euclidean_metric, points)
-        
 
         # Upper Triangle Matrices
         omega_ij = jnp.triu((euclidean_distance_squared), k = 1)
@@ -89,6 +86,9 @@ euclidean_distance_squared
         omega_n = jnp.power(omega_n, beta / 2) / beta
         ee_n = 2 * ee_ij[triangle_indices_i, triangle_indices_j]
 
+        # Set omega to 0 when energy is 0
+        omega_n = jnp.where(ee_n == 0, 0, omega_n)
+
         s = jnp.stack((omega_n, ee_n), axis = 1)
         s = jnp.transpose(s, (0,1))
         
@@ -102,6 +102,64 @@ euclidean_distance_squared
         
 
         return s.astype(dtype)
+
+
+
+
+# ########## Spectral Representation ##########
+def compute_spectral_representation_cylindrical(events, omega_max = 2, beta = 1.0, dtype = jnp.float32):
+        """Function to compute the spectral representation of a set of events. Must be compiled before use on batched events -- see SPECTER.compile().
+euclidean_distance_squared
+        Args:
+            events (ndarray): Array of events with shape (batch_size, pad, 3)
+            omega_max (float, optional): Maximum omega value. Defaults to 2.
+            beta (float, optional): Beta value for the spectral representation. Defaults to 1.
+            dtype (jax.numpy.dtype, optional): Data type for the output. Defaults to jax.numpy.float32.
+
+        Returns:
+            ndarray: Spectral representation of the events with shape (batch_size, pad*(pad-1)/2, 2)
+        """
+
+        # Events shape is (pad, 3)
+        points, zs = events[:,1:], events[:,0]
+
+
+        euclidean_distance_squared = cylindrical_metric(points)
+
+
+        # Upper Triangle Matrices
+        omega_ij = jnp.triu((euclidean_distance_squared), k = 1)
+        triangle_indices = jnp.triu_indices(zs.shape[0], k = 1)
+        triangle_indices_i = triangle_indices[0]
+        triangle_indices_j = triangle_indices[1]
+
+        # Get pairwise products of energies
+        ee_ij = jnp.triu(zs[:,None] * zs[None,:])
+        ee2 = jnp.trace(ee_ij, axis1 = 0, axis2=1)
+
+        # Flatten to 1D Spectral Representation and remove 0s
+        omega_n = omega_ij[triangle_indices_i, triangle_indices_j]
+        omega_n = jnp.power(omega_n, beta / 2) / beta
+        ee_n = 2 * ee_ij[triangle_indices_i, triangle_indices_j]
+
+        # Set omega to 0 when energy is 0
+        omega_n = jnp.where(ee_n == 0, 0, omega_n)
+
+        s = jnp.stack((omega_n, ee_n), axis = 1)
+        s = jnp.transpose(s, (0,1))
+        
+        # Sort and append 0
+        indices = s[:,0].argsort()
+        s = s[indices]
+        s0 = jnp.zeros((1, 1))
+        s1 = jnp.concatenate((s0, ee2 * jnp.ones((1,1))), axis = 1)
+        s = jnp.concatenate((s1, s), axis = 0)
+
+        
+
+        return s.astype(dtype)
+
+
 
 
 
@@ -153,17 +211,27 @@ def balance(s1, s2, omega):
     # Determine which event has less energy
     if total_energy1 < total_energy2:
         # s1 has less energy, so we need to add energy to it
-        s1 = jnp.concatenate((s1, jnp.array([[omega, difference]])), axis=0)
+        s1 = jnp.concatenate((s1, jnp.array([[omega, -difference]])), axis=0)
 
         # Resorting the combined array by omega
         s1 = jnp.sort(s1, axis=0)
 
+        # add a blank entry to s2 to balance the arrays
+        s2 = jnp.concatenate((s2, jnp.array([[0, 0]])), axis=0)
+        s2 = jnp.sort(s2, axis=0)
+
     else:
         # s2 has less energy, so we need to add energy to it
-        s2 = jnp.concatenate((s2, jnp.array([[omega, -difference]])), axis=0)
+        s2 = jnp.concatenate((s2, jnp.array([[omega, difference]])), axis=0)
 
         # Resorting the combined array by omega
         s2 = jnp.sort(s2, axis=0)
+
+        # add a blank entry to s1 to balance the arrays
+        s1 = jnp.concatenate((s1, jnp.array([[0, 0]])), axis=0)
+        s1 = jnp.sort(s1, axis=0)
+
+
 
     return s1, s2
 

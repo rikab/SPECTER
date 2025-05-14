@@ -16,7 +16,7 @@ import jax.numpy as jnp
 from pyspecter.Observables import Observable
 
 # Spectral EMD Helper imports
-from pyspecter.SpectralEMD_Helper import compute_spectral_representation,  ds2
+from pyspecter.SpectralEMD_Helper import compute_spectral_representation, compute_spectral_representation_cylindrical,  ds2
 from pyspecter.SpectralEMD_Helper import cross_ds2_events1_events2
 from pyspecter.SpectralEMD_Helper import balance
 
@@ -37,15 +37,6 @@ class SPECTER():
         """
 
         
-        self.obserables = observables
-        if observables is None:
-            self.obserables = []
-
-        # Validate that all observables are an Observable or subclass of Observable:
-        for observable in self.obserables:
-            if not isinstance(observable, Observable):
-                raise TypeError(f"Invalid observable {observable}! Must be an an instance of Observable!")
-
         # Compile the model
         if compile:
             self.compile()
@@ -117,7 +108,7 @@ class SPECTER():
             ndarray: Spectral representation of the events with shape (batch_size, pad*(pad-1)/2, 2)
         """
 
-        return compute_spectral_representation(events, omega_max, beta, dtype, euclidean=True, cylindrical=True)
+        return compute_spectral_representation_cylindrical(events, omega_max, beta, dtype)
     
     # Function to compute the spectral representation of a set of events. Must be compiled before use on batched events -- see SPECTER.compile().
     def spectralEMD(self, events1, events2, type1 = "events", type2 = "events", beta = 1, metric = "euclidean", omega_max = None):
@@ -163,8 +154,8 @@ class SPECTER():
         
 
         # Check for balanced OT
-        total_energy_1 = jnp.sum(s1[:, :, 0], axis = 1)
-        total_energy_2 = jnp.sum(s2[:, :, 0], axis = 1)
+        total_energy_1 = jnp.sum(events1[:, :, 0], axis = 1)
+        total_energy_2 = jnp.sum(events2[:, :, 0], axis = 1)
 
 
         tolerance = 1e-4
@@ -180,8 +171,17 @@ class SPECTER():
 
             else:
                 print(f"Warning: Events are not balanced to within 1e-4! Indices: {indices}. Total energy of events1: {total_energy_1[indices]} and events2: {total_energy_2[indices]}! Using unbalanced OT with omega_max = {omega_max}!")
-                s1, s2 = self.balance(s1, s2, omega_max = omega_max)
+                
+                # Loop over all events in the batch and use the balance function to balance the events
+                s1s = []
+                s2s = []
+                for i in range(len(events1)):
+                    s1_, s2_ = balance(s1[i], s2[i], omega_max)
 
+                    s1s.append(s1_)
+                    s2s.append(s2_)
+                s1 = jnp.array(s1s)
+                s2 = jnp.array(s2s)
 
         # Check for empty event
 
@@ -290,40 +290,7 @@ class SPECTER():
 
 
 
-                # ########## Generate and compile observable training functions ##########
-
-        if verbose:
-            print("Compiling observables...")
-
-        for observable in self.obserables:
-
-            def train_step(epoch, events, sprongs, return_grads = True):
-
-                # TODO: Think about generating sprongs from the observable itself using params
-                sEMD2s = self.ds2_spectral1_events2(sprongs, events)
-                grads = self.ds2_spectral1_events2_gradients(sprongs, events)
-                return sEMD2s, grads
-            
-
-            train_step = jax.jit(jax.vmap(train_step, in_axes = (None, 0, 0, None)))
-
-
-            # Dyanmically create the function self.compute_{observable_name} and self.compute_{observable_name}_gradients
-            def compute_observable(events, beta = 1.0, R = 0.1, timing = True, epochs = 100, learning_rate = 0.1, verbose = True):
-
-                # Optimizer
-                opt_state = None
-                opt_init, opt_update, get_params = jax_opt.adam(learning_rate)
-                opt_state = opt_init(sprongs)
-
-
-                return observable.compute(sprongs)
-            
-
-        if verbose:
-            print("Observables compiled! Time taken: ", time.time() - start, " seconds.")
-
-
+     
 
         if verbose:
             print("Compilation complete! Time taken: ", time.time() - start, " seconds.")

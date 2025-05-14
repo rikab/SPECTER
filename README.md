@@ -54,6 +54,7 @@ Many of the examples and studies depend on the [ParticleLoader](https://github.c
 
 ## Changelog
 
+- v1.1.0: 13 May 2025. Added support for cylindrical metrics. Added support for unbalanced OT. Resolved bugs relating to zero-padding.
 - v1.0.0: 8 October 2024. Official public release.
 
 Based on the work in ["SPECTER: fficient Evaluation of the Spectral EMD" (arxiv:2410.XXXXX)](https://arxiv.org/abs/2410.XXXXX)
