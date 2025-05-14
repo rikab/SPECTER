@@ -13,6 +13,24 @@ import numpy as np
 def euclidean_metric(points):
     return jnp.sum(jnp.square(points[:, None, :] - points[None, :, :]), axis=-1)
 
+
+
+def euclidean_metric_cross(points1, points2):
+    return jnp.sum(jnp.square(points1[:, None, :] - points2[None, :, :]), axis=-1)
+
+
+def cylindrical_metric(points):
+
+    ETA_INDEX = 0
+    PHI_INDEX = 1
+    delta_eta = jnp.square(points[:, None, ETA_INDEX] - points[None, :, ETA_INDEX])
+
+    # Make phi periodic by using the periodicity of the cosine
+    delta_phi = jnp.square(jnp.arccos(jnp.cos(points[:, None, PHI_INDEX] - points[None, :, PHI_INDEX])))
+    
+    return delta_eta + delta_phi
+
+
 def spherical_metric(points):
 
     # Square so the beta = 1 default works
@@ -25,9 +43,15 @@ def spherical_metric(points):
     return jnp.sqrt(1 - jnp.sum(points[:, None, :] * points[None, :, :], axis=-1) / (jnp.linalg.norm(points[:, None, :], axis=-1) * jnp.linalg.norm(points[None, :, :], axis=-1)))
 
 
+def spherical_metric_cross(points1, points2):
+    
+    return jnp.nan_to_num(jnp.square(1 - (jnp.sum(points1[:, None, :] * points2[None, :, :], axis=-1) / jnp.linalg.norm(points1[:, None, :], axis=-1) / jnp.linalg.norm(points2[None, :], axis=-1))))
+    return jnp.nan_to_num(jnp.square(jnp.arccos(jnp.sum(points1[:, None, :] * points2[None, :, :], axis=-1) / jnp.linalg.norm(points1[:, None, :], axis=-1) / jnp.linalg.norm(points2[None, :], axis=-1))))
+    return jnp.sqrt(1 - jnp.sum(points1[:, None, :] * points2[None, :, :], axis=-1) / (jnp.linalg.norm(points1[:, None, :], axis=-1) * jnp.linalg.norm(points2[None, :, :], axis=-1)))
+
 
 # ########## Spectral Representation ##########
-def compute_spectral_representation(events, omega_max = 2, beta = 1.0, dtype = jnp.float32, euclidean = True):
+def compute_spectral_representation(events, omega_max = 2, beta = 1.0, dtype = jnp.float32, euclidean = True, cylindrical = False):
         """Function to compute the spectral representation of a set of events. Must be compiled before use on batched events -- see SPECTER.compile().
 euclidean_distance_squared
         Args:
@@ -45,6 +69,9 @@ euclidean_distance_squared
 
 
         euclidean_distance_squared = jax.lax.cond(euclidean, euclidean_metric, spherical_metric, points)
+
+        # If cylindrical, use cylindrical metric
+        euclidean_distance_squared = jax.lax.cond(cylindrical, cylindrical_metric, euclidean_metric, points)
         
 
         # Upper Triangle Matrices
@@ -75,6 +102,70 @@ euclidean_distance_squared
         
 
         return s.astype(dtype)
+
+
+
+def compute_double_spectral_representation(event1, event2, omega_max = 2, beta = 1.0, dtype = jnp.float32, euclidean = True):
+
+    s1 = compute_spectral_representation(event1, omega_max, beta, dtype, euclidean)
+    s2 = compute_spectral_representation(event2, omega_max, beta, dtype, euclidean)
+
+
+    # concatenate the two spectral representations, sort by omega
+    s = jnp.concatenate((s1, s2), axis = 0)
+    indices = s[:,0].argsort()
+    s = s[indices]
+
+    return s
+
+
+
+def compute_cross_spectral_representation(event1, event2, omega_max = 2, beta = 1.0, dtype = jnp.float32, euclidean = True):
+
+    points1, zs1 = event1[:,1:], event1[:,0]
+    points2, zs2 = event2[:,1:], event2[:,0]
+
+    euclidean_distance_squared = jax.lax.cond(euclidean, euclidean_metric_cross, spherical_metric_cross, points1, points2)
+    e_ij = 2 * zs1[:,None] * zs2[None,:]
+
+
+    omega_n = euclidean_distance_squared.flatten()
+    omega_n = jnp.power(omega_n, beta / 2) / beta
+    ee_n = e_ij.flatten()
+
+    s = jnp.stack((omega_n, ee_n), axis = 1)
+    s = jnp.transpose(s, (0,1))
+
+    # Sort
+    indices = s[:,0].argsort()
+    s = s[indices]
+
+    return s.astype(dtype)
+
+    
+def balance(s1, s2, omega):
+
+    total_energy1 = jnp.sum(s1[:,1])
+    total_energy2 = jnp.sum(s2[:,1])
+
+    difference = total_energy1 - total_energy2
+
+    # Determine which event has less energy
+    if total_energy1 < total_energy2:
+        # s1 has less energy, so we need to add energy to it
+        s1 = jnp.concatenate((s1, jnp.array([[omega, difference]])), axis=0)
+
+        # Resorting the combined array by omega
+        s1 = jnp.sort(s1, axis=0)
+
+    else:
+        # s2 has less energy, so we need to add energy to it
+        s2 = jnp.concatenate((s2, jnp.array([[omega, -difference]])), axis=0)
+
+        # Resorting the combined array by omega
+        s2 = jnp.sort(s2, axis=0)
+
+    return s1, s2
 
 
 
@@ -253,8 +344,10 @@ def cross_term_improved(s1, s2):
     Etot2 = jnp.sum(E2s)
 
     # Exclusive = inclusive - 2EE
-    cumulative_exclusive_1 = cumulative_inclusive_1 - E1s
-    cumulative_exclusive_2 = cumulative_inclusive_2 - E2s
+    cumulative_exclusive_1 = jnp.concatenate((cumulative_inclusive_1[:1],
+                                          cumulative_inclusive_1[:-1]))
+    cumulative_exclusive_2 = jnp.concatenate((cumulative_inclusive_2[:1],
+                                          cumulative_inclusive_2[:-1]))
 
     # Determine which indices survive the theta function O(n^2)
     indices, mask = find_indices(cumulative_inclusive_1, cumulative_inclusive_2)
@@ -341,6 +434,23 @@ def ds2_spectral1_events2(s1, events2):
     """
         
     s2 = compute_spectral_representation(events2)
+
+    return ds2(s1, s2)
+
+
+def cross_ds2_events1_events2(events1, events2):
+    """Function to compute the spectral Earth Mover's Distance between two sets of events
+
+    Args:
+        events1 (ndarray): Array of events with shape (batch_size, pad1, 3)
+        events2 (ndarray): Array of events with shape (batch_size, pad2, 3)
+
+    Returns:
+        ndarray: Spectral EMD between events1 and events2 of size (batch_size,)
+    """
+
+    s1 = compute_double_spectral_representation(events1, events2)
+    s2 = compute_cross_spectral_representation(events1, events2)
 
     return ds2(s1, s2)
 

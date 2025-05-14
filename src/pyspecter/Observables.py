@@ -15,7 +15,7 @@ import jax.example_libraries.optimizers as jax_opt
 
 
 
-from pyspecter.SpectralEMD_Helper import ds2, compute_spectral_representation
+from pyspecter.SpectralEMD_Helper import ds2, compute_spectral_representation, compute_cross_spectral_representation, compute_double_spectral_representation
 
 
 
@@ -35,8 +35,12 @@ class Observable():
 
         if self.is_euclidean:
             self.csr = compute_spectral_representation
+            self.cross_csr = compute_cross_spectral_representation
+            self.double_csr = compute_double_spectral_representation
         else:
             self.csr = compute_spectral_representation_spherical
+            self.cross_csr = compute_cross_spectral_representation_spherical
+            self.double_csr = compute_double_spectral_representation_spherical
 
 
         if initializer is not None:
@@ -65,6 +69,8 @@ class Observable():
         # Get the gradient of the spectral EMDs
         self.gradient_train_step = grad(self.train_step, argnums = 2)
         self.gradient_and_loss = value_and_grad(self.train_step, argnums = 2)
+        self.gradient_cross_train_step = grad(self.cross_train_step, argnums = 2)
+        self.gradient_and_loss_cross = value_and_grad(self.cross_train_step, argnums = 2)
 
         if  vmap_before_jit:
 
@@ -72,31 +78,43 @@ class Observable():
 
             # vmap everything
             vmapped_compute_spectral_representation = vmap(self.csr, in_axes = (0,))
+            vmapped_compute_cross_spectral_representation = vmap(self.cross_csr, in_axes = (0, 0))
+            vmapped_compute_double_spectral_representation = vmap(self.double_csr, in_axes = (0, 0))
             vmapped_train_step = vmap(self.train_step, in_axes = (None, 0, 0, None))
+            vmapped_cross_train_step = vmap(self.cross_train_step, in_axes = (None, 0, 0, None))
+
             if self.skip_vmap_initialization:
                 vmapped_initializer = self.initializer
             else:
                 vmapped_initializer = vmap(self.initializer, in_axes = (0, None, None))
             vmapped_projector = vmap(self.projector, in_axes = (0,))
             vmapped_gradient_train_step = vmap(self.gradient_train_step, in_axes = (None, 0, 0, None))
+            vmapped_cross_gradient_train_step = vmap(self.gradient_cross_train_step, in_axes = (None, 0, 0, None))
             vmapped_finite_differences_gradient = vmap(self.finite_differences_gradient, in_axes = (None, 0, 0, 0, None))
             vmapped_gradient_and_loss = vmap(self.gradient_and_loss, in_axes = (None, 0, 0, None))
+            vmapped_gradient_and_loss_cross = vmap(self.gradient_and_loss_cross, in_axes = (None, 0, 0, None))
 
             if self.hard_compute_function is not None:
                 vmapped_hard_compute = vmap(self.hard_compute_function, in_axes = (0,))
 
             # Compile everything
             self.compiled_compute_spectral_representation = jit(self.csr)
+            self.vmapped_compute_cross_spectral_representation = jit(vmapped_compute_cross_spectral_representation)
+            self.vmapped_compute_double_spectral_representation = jit(vmapped_compute_double_spectral_representation)
+
             self.vmapped_compute_spectral_representation = jit(vmapped_compute_spectral_representation)
             self.vmapped_train_step = jit(vmapped_train_step, static_argnums= (3,))
+            self.vmapped_cross_train_step = jit(vmapped_cross_train_step, static_argnums= (3,))
             if self.skip_vmap_initialization:
                 self.vmapped_initializer = self.initializer
             else:
                 self.vmapped_gradient_train_step = jit(vmapped_gradient_train_step, static_argnums= (3,))
+                self.vmapped_cross_gradient_train_step = jit(vmapped_cross_gradient_train_step, static_argnums= (3,))
             self.vmapped_initializer = jit(vmapped_initializer)
             self.vmapped_projector = jit(vmapped_projector)
             self.vmapped_finite_differences_gradient = jit(vmapped_finite_differences_gradient, static_argnums=(4,))
             self.vmapped_gradient_and_loss = jit(vmapped_gradient_and_loss, static_argnums=(3,))
+            self.vmapped_gradient_and_loss_cross = jit(vmapped_gradient_and_loss_cross, static_argnums=(3,))
 
             if self.hard_compute_function is not None:
                 self.vmapped_hard_compute = jit(vmapped_hard_compute)
@@ -107,20 +125,30 @@ class Observable():
 
             # Compile everything
             jit_compute_spectral_representation = jit(self.csr)
+            jit_compute_cross_spectral_representation = jit(self.cross_csr)
+            jit_compute_double_spectral_representation = jit(self.double_csr)
+
             jit_train_step = jit(self.train_step, static_argnums=(3,))
+            jit_cross_train_step = jit(self.cross_train_step, static_argnums=(3,))
             jit_gradient_train_step = jit(self.gradient_train_step, static_argnums=(3,))
+            jit_gradient_cross_train_step = jit(self.gradient_cross_train_step, static_argnums=(3,))
             jit_initializer = jit(self.initializer)
             jit_projector = jit(self.projector)
             jit_finite_differences_gradient = jit(self.finite_differences_gradient, static_argnums=(4,))
             jit_gradient_and_loss = jit(self.gradient_and_loss, static_argnums=(3,))
+            jit_gradient_and_loss_cross = jit(self.gradient_and_loss_cross, static_argnums=(3,))
             if self.hard_compute_function is not None:
                 jit_hard_compute = jit(self.hard_compute_function)
 
 
             # vmapped everything
             self.vmapped_compute_spectral_representation = vmap(jit_compute_spectral_representation, in_axes = (0,))
+            self.vmapped_compute_cross_spectral_representation = vmap(jit_compute_cross_spectral_representation, in_axes = (0, 0))
+            self.vmapped_compute_double_spectral_representation = vmap(jit_compute_double_spectral_representation, in_axes = (0, 0))
             self.vmapped_train_step = vmap(jit_train_step, in_axes = (None, 0, 0, None))
+            self.vmapped_cross_train_step = vmap(jit_cross_train_step, in_axes = (None, 0, 0, None))
             self.vmapped_gradient_train_step = vmap(jit_gradient_train_step, in_axes = (None, 0, 0, None))
+            self.vmapped_cross_gradient_train_step = vmap(jit_gradient_cross_train_step, in_axes = (None, 0, 0, None))
             
             if self.skip_vmap_initialization:
                 self.vmapped_initializer = self.initializer
@@ -129,6 +157,7 @@ class Observable():
             self.vmapped_projector = vmap(jit_projector, in_axes = (0,))
             self.vmapped_finite_differences_gradient = vmap(jit_finite_differences_gradient, in_axes = (None, 0, 0, 0, None))
             self.vmapped_gradient_and_loss = vmap(jit_gradient_and_loss, in_axes = (None, 0, 0, None))
+            self.vmapped_gradient_and_loss_cross = vmap(jit_gradient_and_loss_cross, in_axes = (None, 0, 0, None))
             self.vmapped_ensemble_gradient_and_loss = vmap(jit_gradient_and_loss, in_axes = (None, 0, None, None))
             if self.hard_compute_function is not None:
                 self.vmapped_hard_compute = vmap(jit_hard_compute)
@@ -229,6 +258,95 @@ class Observable():
                 masked_grads = self.vmapped_finite_differences_gradient(epoch, sEMD, masked_spectral_events, masked_params, N_sample)
             else:
                 sEMD, masked_grads = self.vmapped_gradient_and_loss(epoch, masked_spectral_events, masked_params, N_sample)
+            
+            # Unmask the gradients and sEMD
+            grads = {k: jnp.zeros_like(v) for k, v in params.items()}
+            for key in grads.keys():
+                grads[key] = grads[key].at[early_stopping_mask].set(masked_grads[key])
+            unmasked_sEMD = jnp.zeros_like(losses[epoch])
+            unmasked_sEMD = unmasked_sEMD.at[early_stopping_mask].set(sEMD)
+
+            # Fix NaNs
+            for key in grads.keys():
+                grads[key] = jnp.nan_to_num(grads[key])
+
+            # Gradient update
+            opt_state = opt_update(epoch, grads, opt_state)
+
+           # Apply the separate function to modify the parameters
+            new_params = self.vmapped_projector(get_params(opt_state))
+
+            # Manually modify the opt_state's parameters without resetting internal state
+            opt_state = replace_params_in_state(opt_state, new_params)
+            losses[epoch] = jnp.where(early_stopping_mask, unmasked_sEMD, losses[epoch-1])
+
+            # if the loss has not changed in 10 epochs, stop
+            early_stopping_epoch = max(epoch - early_stopping, 0)
+
+            if epoch >= 1:
+                mins = jnp.min(losses[early_stopping_epoch:epoch], axis=0)
+                # early_stopping_mask = early_stopping_mask & (early_stopping_counter < early_stopping)
+                is_done = is_done & (early_stopping_counter < early_stopping)
+                losses[epoch] = jnp.where(early_stopping_mask, unmasked_sEMD, mins)
+                early_stopping_counter = jnp.where(losses[epoch] >= mins, early_stopping_counter + 1, 0)
+                
+
+                # Update best_params for events where loss has decreased
+                update_mask = unmasked_sEMD < losses[epoch-1]
+                for key in params.keys():
+
+                    # add None dimensions to update_mask to match the shape of new_params[key]
+                    mask_broadcasted = lax.broadcast_in_dim(update_mask, best_params[key].shape, broadcast_dimensions=(0,))
+                    best_params[key] = lax.select(mask_broadcasted, new_params[key], best_params[key])
+                    
+            frac = 1 - np.sum(is_done)/events.shape[0]
+
+            if verbose:
+                current_time = time()
+                time_history.append(current_time)
+                print(f"{self.name}: Epoch {epoch} of {epochs}, Mean Loss: {jnp.mean(losses[epoch]) : .3e}, Time: {current_time - start_time : .3f}s ({time_history[-1] - time_history[-2] : .3f}s), Early Stopping: {frac : .3f}")
+
+
+            if np.all(~early_stopping_mask) or frac > early_stopping_fraction:
+                break     
+
+        return jnp.min(losses, axis = 0), best_params, losses, params_history
+
+
+    def compute_cross(self, events, learning_rate = 0.001, epochs = 150, early_stopping = 10, early_stopping_fraction = 0.95, N_sample = 25, finite_difference = False, seed = 0, verbose = True):
+
+        # Initialize
+        params =   self.vmapped_initializer(events, N_sample, seed)
+        start_time = time()
+        time_history = [start_time]
+
+        # Optimizer
+        opt_state = None
+        opt_init, opt_update, get_params = jax_opt.adam(learning_rate)
+        opt_state = opt_init(params)
+
+        losses = np.ones((epochs,events.shape[0])) * 99999
+        early_stopping_counter = np.zeros((events.shape[0],), dtype = np.int32)
+        early_stopping_mask = jnp.ones((events.shape[0],), dtype = np.bool)
+        is_done = jnp.ones((events.shape[0],), dtype = np.bool)
+        best_params = params.copy()
+        params_history = []
+
+        if self.is_trivial:
+            sEMD = self.vmapped_cross_train_step(0, events, params, N_sample)
+            return sEMD, params, losses, params_history
+        
+        for epoch in range(epochs):
+
+            params = get_params(opt_state)
+            params = self.vmapped_projector(params)
+            params_history.append(params)
+
+            masked_events = events[early_stopping_mask]
+            masked_params = mask_dict(params, early_stopping_mask)
+
+            
+            sEMD, masked_grads = self.vmapped_gradient_and_loss_cross(epoch, masked_events, masked_params, N_sample)
             
             # Unmask the gradients and sEMD
             grads = {k: jnp.zeros_like(v) for k, v in params.items()}
@@ -411,6 +529,17 @@ class Observable():
         return sEMDS
     
 
+    def cross_train_step(self, epoch, spectral_event, params, sample_N, seed = 0):
+        
+        shape_event = self.sample(params, sample_N, seed = epoch + seed)
+        cross = self.cross_csr(shape_event, spectral_event)
+        double = self.double_csr(shape_event, spectral_event)
+        sEMDS = checkpoint(ds2)(cross, double) / 2
+
+        return sEMDS
+
+    
+
     def finite_differences_gradient(self, epoch, sEMD, spectral_event, params, N_sample = 25, epsilon=1e-2):
         """
         Compute the gradient of `loss_fn` with respect to `params` using finite differences.
@@ -479,3 +608,11 @@ def compute_spectral_representation_spherical(events, omega_max = 2, beta = 1, d
     """
 
     return compute_spectral_representation(events, omega_max, beta, dtype, euclidean=False)
+
+def compute_cross_spectral_representation_spherical(events1, events2, omega_max = 2, beta = 1, dtype = jnp.float32):
+
+    return compute_cross_spectral_representation(events1, events2, omega_max, beta, dtype, euclidean=False)
+
+def compute_double_spectral_representation_spherical(events1, events2, omega_max = 2, beta = 1, dtype = jnp.float32):
+
+    return compute_double_spectral_representation(events1, events2, omega_max, beta, dtype, euclidean=False)

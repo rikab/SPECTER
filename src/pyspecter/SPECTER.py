@@ -17,6 +17,8 @@ from pyspecter.Observables import Observable
 
 # Spectral EMD Helper imports
 from pyspecter.SpectralEMD_Helper import compute_spectral_representation,  ds2
+from pyspecter.SpectralEMD_Helper import cross_ds2_events1_events2
+from pyspecter.SpectralEMD_Helper import balance
 
 
 
@@ -101,8 +103,24 @@ class SPECTER():
 
         return compute_spectral_representation(events, omega_max, beta, dtype, euclidean=False)
     
+
+    def compute_spectral_repsentation_cylindrical(self, events, omega_max = 2, beta = 1, dtype = jnp.float32):
+        """Function to compute the spectral representation of a set of events. Must be compiled before use on batched events -- see SPECTER.compile().
+
+        Args:
+            events (ndarray): Array of events with shape (batch_size, pad, 3)
+            omega_max (float, optional): Maximum omega value. Defaults to 2.
+            beta (float, optional): Beta value for the spectral representation. Defaults to 1.
+            dtype (jax.numpy.dtype, optional): Data type for the output. Defaults to jax.numpy.float32.
+
+        Returns:
+            ndarray: Spectral representation of the events with shape (batch_size, pad*(pad-1)/2, 2)
+        """
+
+        return compute_spectral_representation(events, omega_max, beta, dtype, euclidean=True, cylindrical=True)
+    
     # Function to compute the spectral representation of a set of events. Must be compiled before use on batched events -- see SPECTER.compile().
-    def spectralEMD(self, events1, events2, type1 = "events", type2 = "events", beta = 1, metric = "euclidean"):
+    def spectralEMD(self, events1, events2, type1 = "events", type2 = "events", beta = 1, metric = "euclidean", omega_max = None):
         """Function to compute the spectral Earth Mover's Distance between two sets of events
 
         Args:
@@ -124,6 +142,8 @@ class SPECTER():
                 s1 = self.compute_spectral_representation(events1)
             elif metric == "spherical":
                 s1 = self.compute_spectral_representation_spherical(events1)
+            elif metric == "cylindrical":
+                s1 = self.compute_spectral_repsentation_cylindrical(events1)
         elif type1 == "spectral":
             s1 = events1
         else:
@@ -134,10 +154,36 @@ class SPECTER():
                 s2 = self.compute_spectral_representation(events2)
             elif metric == "spherical":
                 s2 = self.compute_spectral_representation_spherical(events2)
+            elif metric == "cylindrical":
+                s2 = self.compute_spectral_repsentation_cylindrical(events2)
         elif type2 == "spectral":
             s2 = events2
         else:
             raise ValueError(f"Invalid type {type2} for events2! Must be 'events' or 'spectral'!")
+        
+
+        # Check for balanced OT
+        total_energy_1 = jnp.sum(s1[:, :, 0], axis = 1)
+        total_energy_2 = jnp.sum(s2[:, :, 0], axis = 1)
+
+
+        tolerance = 1e-4
+        if jnp.any(jnp.abs(total_energy_1 - total_energy_2) > tolerance):
+
+            # get the indices of the events that are not balanced
+            indices = jnp.where(jnp.abs(total_energy_1 - total_energy_2) > tolerance)[0]
+            # get the values of the events that are not balanced
+            values = jnp.abs(total_energy_1[indices] - total_energy_2[indices])
+
+            if omega_max is None:
+                raise ValueError(f"Events are not balanced to within 1e-4! Indices: {indices}. Total energy of events1: {total_energy_1[indices]} and events2: {total_energy_2[indices]}! Please use the unbalanced OT function instead by setting omega_max!")
+
+            else:
+                print(f"Warning: Events are not balanced to within 1e-4! Indices: {indices}. Total energy of events1: {total_energy_1[indices]} and events2: {total_energy_2[indices]}! Using unbalanced OT with omega_max = {omega_max}!")
+                s1, s2 = self.balance(s1, s2, omega_max = omega_max)
+
+
+        # Check for empty event
 
         # Check batch sizes
         batch_size_1 = s1.shape[0]
@@ -149,6 +195,12 @@ class SPECTER():
         # Compute EMD
         return self.ds2(s1, s2)
     
+
+    def crossEMD(self, events1, events2, beta = 1, metric = "euclidean"):
+
+        return self.cross_ds2_events1_events2(events1, events2)
+
+
 
     # Compilation handling
     def compile(self, verbose = True):
@@ -175,6 +227,7 @@ class SPECTER():
         test_events_2 = jnp.ones((3, 101, 3))
         self.compute_spectral_representation_TEMP, self.spectral_epresentation_gradients_TEMP = self.initialize_function_grad_trace(self.compute_spectral_representation, test_events_1, jacobian= True)
         self.compute_spectral_representation_spherical_TEMP, self.spectral_epresentation_spherical_gradients_TEMP = self.initialize_function_grad_trace(self.compute_spectral_representation_spherical, test_events_1, jacobian= True) 
+        self.compute_spectral_representation_cylindrical_TEMP, self.spectral_epresentation_cylindrical_gradients_TEMP = self.initialize_function_grad_trace(self.compute_spectral_repsentation_cylindrical, test_events_1, jacobian= True)
 
         test_spectral_1 = self.compute_spectral_representation_TEMP(test_events_1)
         test_spectral_2 = self.compute_spectral_representation_TEMP(test_events_2)
@@ -193,12 +246,16 @@ class SPECTER():
         self.ds2_events1_events2, self.ds2_events1_events2_gradients = self.initialize_function_grad_trace(self.ds2_events1_events2, test_events_1, test_events_2)
         self.ds2_events1_spectral2, self.ds2_events1_spectral2_gradients = self.initialize_function_grad_trace(self.ds2_events1_spectral2, test_events_1, test_spectral_2)
         self.ds2_spectral1_events2, self.ds2_spectral1_events2_gradients = self.initialize_function_grad_trace(self.ds2_spectral1_events2, test_spectral_1, test_events_2)
+        self.cross_ds2_events1_events2, self.cross_ds2_events1_events2_gradients = self.initialize_function_grad_trace(cross_ds2_events1_events2, test_events_1, test_events_2)
 
+
+        self.balance = jax.vmap(balance, in_axes = (0, 0, None))
 
 
         # Spectral representation function
         self.compute_spectral_representation, self.spectral_representation_gradients = self.initialize_function_grad_trace(self.compute_spectral_representation, test_events_1, jacobian= True)
         self.compute_spectral_representation_spherical, self.spectral_representation_spherical_gradients = self.initialize_function_grad_trace(self.compute_spectral_representation_spherical, test_events_1, jacobian= True)
+        self.compute_spectral_repsentation_cylindrical, self.spectral_representation_cylindrical_gradients = self.initialize_function_grad_trace(self.compute_spectral_repsentation_cylindrical, test_events_1, jacobian= True)
 
         # ds2 function
         test_spectral_1 = self.compute_spectral_representation(test_events_1)
@@ -329,3 +386,7 @@ class SPECTER():
             return ds2(s1, s2)
     
         # return ds2_events1_events2, ds2_events1_spectral2, ds2_spectral1_events2
+
+    def cross_ds2_events1_events2(self, events1, events2):
+
+        return cross_ds2_events1_events2(events1, events2)
