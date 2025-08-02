@@ -201,6 +201,24 @@ def compute_cross_spectral_representation(event1, event2, omega_max = 2, beta = 
     return s.astype(dtype)
 
     
+# Helper function 
+def augment_spectral_representation(s, omega_max, delta_E):
+
+    idx = jnp.searchsorted(s[:, 0], omega_max)         
+    n   = s.shape[0]                                    
+
+    out = jnp.zeros((n + 1, s.shape[1]), dtype=s.dtype)
+
+    pos_old = jnp.arange(n)
+    # shift all rows at/after idx down by one slot
+    pos_new = pos_old + (pos_old >= idx)
+
+    out = out.at[pos_new].set(s)    
+    out = out.at[idx].set(jnp.array([omega_max, delta_E], dtype=s.dtype))  # insert
+    return out
+
+
+@jax.jit
 def balance(s1, s2, omega):
 
     total_energy1 = jnp.sum(s1[:,1])
@@ -208,34 +226,19 @@ def balance(s1, s2, omega):
 
     difference = total_energy1 - total_energy2
 
-    # Determine which event has less energy
-    if total_energy1 < total_energy2:
-        # s1 has less energy, so we need to add energy to it
-        s1 = jnp.concatenate((s1, jnp.array([[omega, -difference]])), axis=0)
+    def s1_lower(_):
+        s1_new = augment_spectral_representation(s1,  omega, -difference)
+        s2_new = augment_spectral_representation(s2,  0.0,    0.0)
+        return s1_new, s2_new
+    
+    def s2_lower(_):
+        s1_new = augment_spectral_representation(s1,  0.0,    0.0)
+        s2_new = augment_spectral_representation(s2,  omega, difference)
+        return s1_new, s2_new
+    
+    s1_new, s2_new = jax.lax.cond(difference < 0, s1_lower, s2_lower, operand=None)
 
-        # Resorting the combined array by omega
-        s1 = jnp.sort(s1, axis=0)
-
-        # add a blank entry to s2 to balance the arrays
-        s2 = jnp.concatenate((s2, jnp.array([[0, 0]])), axis=0)
-        s2 = jnp.sort(s2, axis=0)
-
-    else:
-        # s2 has less energy, so we need to add energy to it
-        s2 = jnp.concatenate((s2, jnp.array([[omega, difference]])), axis=0)
-
-        # Resorting the combined array by omega
-        s2 = jnp.sort(s2, axis=0)
-
-        # add a blank entry to s1 to balance the arrays
-        s1 = jnp.concatenate((s1, jnp.array([[0, 0]])), axis=0)
-        s1 = jnp.sort(s1, axis=0)
-
-
-
-    return s1, s2
-
-
+    return s1_new, s2_new
 
 # #############################################
 # ########## Spectral EMD Calculator ##########

@@ -111,7 +111,7 @@ class SPECTER():
         return compute_spectral_representation_cylindrical(events, omega_max, beta, dtype)
     
     # Function to compute the spectral representation of a set of events. Must be compiled before use on batched events -- see SPECTER.compile().
-    def spectralEMD(self, events1, events2, type1 = "events", type2 = "events", beta = 1, metric = "euclidean", omega_max = None):
+    def spectralEMD(self, events1, events2, type1 = "events", type2 = "events", beta = 1, metric = "euclidean", omega_max = None, verbose = False):
         """Function to compute the spectral Earth Mover's Distance between two sets of events
 
         Args:
@@ -125,9 +125,11 @@ class SPECTER():
             ndarray: Spectral EMD between events1 and events2 of size (batch_size,)
         """
 
+        start_time = time.time()
+
         # ########## Input formatting and validation ##########
 
-        # Format and validprint(i_pairs, j_pairs)ate inputs
+        # Format and validate inputs
         if type1 == "events":
             if metric == "euclidean":
                 s1 = self.compute_spectral_representation(events1)
@@ -164,24 +166,26 @@ class SPECTER():
             # get the indices of the events that are not balanced
             indices = jnp.where(jnp.abs(total_energy_1 - total_energy_2) > tolerance)[0]
             # get the values of the events that are not balanced
-            values = jnp.abs(total_energy_1[indices] - total_energy_2[indices])
 
             if omega_max is None:
+
+                indices = jnp.where(jnp.abs(total_energy_1 - total_energy_2) > tolerance)[0]
                 raise ValueError(f"Events are not balanced to within 1e-4! Indices: {indices}. Total energy of events1: {total_energy_1[indices]} and events2: {total_energy_2[indices]}! Please use the unbalanced OT function instead by setting omega_max!")
 
             else:
-                print(f"Warning: Events are not balanced to within 1e-4! Indices: {indices}. Total energy of events1: {total_energy_1[indices]} and events2: {total_energy_2[indices]}! Using unbalanced OT with omega_max = {omega_max}!")
+                print(f"Warning: Events are not balanced to within 1e-4! Using unbalanced OT with omega_max = {omega_max}!")
                 
-                # Loop over all events in the batch and use the balance function to balance the events
-                s1s = []
-                s2s = []
-                for i in range(len(events1)):
-                    s1_, s2_ = balance(s1[i], s2[i], omega_max)
+     
+                s1, s2 = self.balance(s1, s2, omega_max)
+                if verbose:
+                    print(f"Balanced events. Time taken: {time.time() - start_time} seconds.")
+                # for i in range(len(events1)):
+                #     s1_, s2_ = balance(s1[i], s2[i], omega_max)
 
-                    s1s.append(s1_)
-                    s2s.append(s2_)
-                s1 = jnp.array(s1s)
-                s2 = jnp.array(s2s)
+                #     s1s.append(s1_)
+                #     s2s.append(s2_)
+                # s1 = jnp.array(s1s)
+                # s2 = jnp.array(s2s)
 
         # Check for empty event
 
@@ -193,7 +197,11 @@ class SPECTER():
 
 
         # Compute EMD
-        return self.ds2(s1, s2)
+        emds =  self.ds2(s1, s2)
+
+        if verbose:
+            print(f"Finished: Time taken: {time.time() - start_time} seconds.")
+        return emds
     
 
     def crossEMD(self, events1, events2, beta = 1, metric = "euclidean"):
@@ -248,9 +256,11 @@ class SPECTER():
         self.ds2_spectral1_events2, self.ds2_spectral1_events2_gradients = self.initialize_function_grad_trace(self.ds2_spectral1_events2, test_spectral_1, test_events_2)
         self.cross_ds2_events1_events2, self.cross_ds2_events1_events2_gradients = self.initialize_function_grad_trace(cross_ds2_events1_events2, test_events_1, test_events_2)
 
-
+        # self.balance = jax.jit(balance)
         self.balance = jax.vmap(balance, in_axes = (0, 0, None))
 
+        # Initialize the self.balance function
+        test_output1, test_output2 = self.balance(test_spectral_1, test_spectral_2, 1.0)
 
         # Spectral representation function
         self.compute_spectral_representation, self.spectral_representation_gradients = self.initialize_function_grad_trace(self.compute_spectral_representation, test_events_1, jacobian= True)
@@ -313,11 +323,11 @@ class SPECTER():
         """
 
         if not jacobian:
-            grad = jax.jit(jax.vmap(jax.grad(function, argnums=0)))
+            grad = jax.vmap(jax.jit(jax.grad(function, argnums=0)))
         else:
-            grad = jax.jit(jax.vmap(jax.jacfwd(function, argnums=0)))
+            grad = jax.vmap(jax.jit(jax.jacfwd(function, argnums=0)))
 
-        fun = jax.jit(jax.vmap(function))
+        fun = jax.vmap(jax.jit(function))
         if not vmap:
             fun = jax.jit(function)
             grad = jax.jit(jax.grad(function, argnums=0))
